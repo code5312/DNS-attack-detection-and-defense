@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+pcaps/*.pcap
+!pcaps/.gitkeep
+results/*.csv
+results/*.json
+results/*.log
+!results/snort_alerts.log.example
+!results/graphs/.gitkeep
+results/graphs/*.png

@@ -1,0 +1,40 @@
+# DNS 터널링 탐지 설정
+
+capture:
+  interface: eth0
+  pcap_dir: pcaps
+
+snort:
+  rules_file: rules/dns_tunnel.rules
+  alert_log: results/snort_alerts.log
+
+analysis:
+  time_window_seconds: 10
+  suspicious_domain: attacker.lab
+
+thresholds:
+  avg_qname_length: 50
+  max_qname_length: 80
+  avg_entropy: 3.5
+  queries_per_minute: 100
+  txt_cname_ratio: 0.5
+  repeated_base_domain: 30
+  unique_subdomain_ratio_low: 0.3
+
+risk_scores:
+  avg_qname_length: 2
+  max_qname_length: 2
+  avg_entropy: 2
+  queries_per_minute: 3
+  txt_cname_ratio: 2
+  repeated_base_domain: 2
+  snort_alert: 3
+  attacker_domain: 2
+  high_entropy: 2
+
+risk_levels:
+  normal_max: 3      # [LOW]
+  suspicious_max: 6  # [MEDIUM], 7+ [HIGH]
+
+response:
+  block_mode: kali_input
