@@ -1,7 +1,7 @@
 # DNS 터널링 탐지 설정
 
 capture:
-  interface: eth0
+  interface: any
   pcap_dir: pcaps
 
 snort:
@@ -16,25 +16,43 @@ thresholds:
   avg_qname_length: 50
   max_qname_length: 80
   avg_entropy: 3.5
+  max_entropy: 4.5
   queries_per_minute: 100
+  query_count_10s: 50
   txt_cname_ratio: 0.5
+  nxdomain_ratio: 0.3
   repeated_base_domain: 30
+  base32_like_count: 5
+  hex_like_count: 5
   unique_subdomain_ratio_low: 0.3
 
 risk_scores:
   avg_qname_length: 2
   max_qname_length: 2
   avg_entropy: 2
+  max_entropy: 2
   queries_per_minute: 3
+  query_count_10s: 3
   txt_cname_ratio: 2
+  nxdomain_ratio: 2
   repeated_base_domain: 2
+  base32_like_count: 2
+  hex_like_count: 2
   snort_alert: 3
   attacker_domain: 2
+  blacklist_hit: 7
   high_entropy: 2
 
 risk_levels:
-  normal_max: 3      # [LOW]
-  suspicious_max: 6  # [MEDIUM], 7+ [HIGH]
+  normal_max: 3
+  suspicious_max: 6
+  high_max: 11
+
+blacklist:
+  - attacker.lab
+  - evil.lab
+  - malicious.local
 
 response:
   block_mode: kali_input
+  block_ttl_seconds: 60
