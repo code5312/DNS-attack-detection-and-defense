@@ -1,21 +1,34 @@
 #!/bin/bash
-# iptables 차단 해제
-# 사용: sudo ./unblock_ip.sh <src_ip> [mode]
-
 set -euo pipefail
 
 SRC_IP="${1:?Usage: unblock_ip.sh <src_ip> [mode]}"
 MODE="${2:-kali_input}"
+LOG_FILE="$(dirname "$0")/../results/block_rules.log"
+
+if [[ ! "$SRC_IP" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+  echo "Invalid IPv4 format: $SRC_IP"
+  exit 1
+fi
+IFS='.' read -r o1 o2 o3 o4 <<< "$SRC_IP"
+for oct in "$o1" "$o2" "$o3" "$o4"; do
+  if (( oct < 0 || oct > 255 )); then
+    echo "Invalid IPv4 octet in: $SRC_IP"
+    exit 1
+  fi
+done
 
 case "$MODE" in
   kali_input)
     RULE=(iptables -D INPUT -s "$SRC_IP" -p udp --dport 53 -j DROP)
+    CHECK=(iptables -C INPUT -s "$SRC_IP" -p udp --dport 53 -j DROP)
     ;;
   ubuntu_output)
     RULE=(iptables -D OUTPUT -p udp --dport 53 -j DROP)
+    CHECK=(iptables -C OUTPUT -p udp --dport 53 -j DROP)
     ;;
   gateway_forward)
     RULE=(iptables -D FORWARD -s "$SRC_IP" -p udp --dport 53 -j DROP)
+    CHECK=(iptables -C FORWARD -s "$SRC_IP" -p udp --dport 53 -j DROP)
     ;;
   *)
     echo "Unknown mode: $MODE"
@@ -23,6 +36,12 @@ case "$MODE" in
     ;;
 esac
 
+if ! "${CHECK[@]}" 2>/dev/null; then
+  echo "[*] No existing rule for $SRC_IP (mode=$MODE)"
+  exit 0
+fi
+
 echo "[*] Removing rule: ${RULE[*]}"
-"${RULE[@]}" 2>/dev/null || echo "[!] Rule may not exist"
-echo "[+] Unblock complete for $SRC_IP"
+"${RULE[@]}"
+echo "$(date -Iseconds) UNBLOCK $SRC_IP mode=$MODE rule=${RULE[*]}" >> "$LOG_FILE"
+echo "[+] Unblock complete"

@@ -1,27 +1,25 @@
-# DNS 터널링 / dnscat2 Snort 룰
-# 역할: UDP 53, attacker.lab, TXT/CNAME/MX, 의심 payload
-# qname length 검사는 Scapy(dns_analyzer.py)에서 수행
+# DNS tunneling detection rules (defensive)
+# Scope: UDP 53 query/response, known suspicious domain patterns, unusual query types
 
-alert udp any any -> any 53 (msg:"DNS_TUNNEL possible dnscat2 domain attacker.lab"; \
-  content:"attacker"; nocase; content:"lab"; distance:0; within:50; \
-  classtype:policy-violation; sid:1000001; rev:1;)
+alert udp any any -> any 53 (msg:"DNS_TUNNEL attacker.lab domain pattern"; \
+  content:"attacker.lab"; nocase; classtype:policy-violation; sid:1000001; rev:2;)
 
 alert udp any any -> any 53 (msg:"DNS_TUNNEL suspicious TXT query"; \
-  byte_test:2,=,16,2,relative; \
-  classtype:policy-violation; sid:1000002; rev:1;)
+  byte_test:2,=,16,2,relative; classtype:policy-violation; sid:1000002; rev:2;)
 
 alert udp any any -> any 53 (msg:"DNS_TUNNEL suspicious CNAME query"; \
-  byte_test:2,=,5,2,relative; \
-  classtype:policy-violation; sid:1000003; rev:1;)
+  byte_test:2,=,5,2,relative; classtype:policy-violation; sid:1000003; rev:2;)
 
 alert udp any any -> any 53 (msg:"DNS_TUNNEL suspicious MX query"; \
-  byte_test:2,=,15,2,relative; \
-  classtype:policy-violation; sid:1000004; rev:1;)
+  byte_test:2,=,15,2,relative; classtype:policy-violation; sid:1000004; rev:2;)
 
-alert udp any any -> any 53 (msg:"DNS_TUNNEL long suspicious DNS payload"; \
-  dsize:>200; content:"attacker"; nocase; \
-  classtype:policy-violation; sid:1000005; rev:1;)
+alert udp any any -> any 53 (msg:"DNS_TUNNEL long DNS payload"; \
+  dsize:>200; classtype:policy-violation; sid:1000005; rev:2;)
 
-alert udp any any -> any 53 (msg:"DNS_TUNNEL random subdomain attacker.lab pattern"; \
-  content:"attacker.lab"; nocase; \
-  classtype:policy-violation; sid:1000006; rev:1;)
+
+# heuristic-like signatures for encoded/random labels
+alert udp any any -> any 53 (msg:"DNS_TUNNEL base32-like label pattern";   pcre:"/([a-z2-7]{20,})\./i"; classtype:policy-violation; sid:1000006; rev:1;)
+
+alert udp any any -> any 53 (msg:"DNS_TUNNEL hex-like label pattern";   pcre:"/([a-f0-9]{24,})\./i"; classtype:policy-violation; sid:1000007; rev:1;)
+
+alert udp any any -> any 53 (msg:"DNS_TUNNEL random long subdomain pattern";   pcre:"/([a-z0-9]{30,})\./i"; classtype:policy-violation; sid:1000008; rev:1;)
