@@ -49,9 +49,10 @@ risk_levels:
   high_max: 11
 
 blacklist:
-  - attacker.lab
-  - evil.lab
-  - malicious.local
+  domains:
+    - attacker.lab
+    - evil.lab
+    - malicious.local
   ip_file: rules/ip_blacklist.txt
   domain_file: rules/domain_blacklist.txt
   whitelist_file: rules/domain_whitelist.txt
@@ -59,18 +60,6 @@ blacklist:
 response:
   block_mode: kali_input
   block_ttl_seconds: 60
-
-
-live_engine:
-  enabled: true
-  iface: any
-  bpf_filter: "udp port 53"
-  ndjson_output: results/siem_dns_detect.json
-  state_db: results/live_soar_state.db
-  ip_blacklist_file: rules/ip_blacklist.txt
-  domain_blacklist_file: rules/domain_blacklist.txt
-  domain_whitelist_file: rules/domain_whitelist.txt
-
 
 live:
   enabled: true

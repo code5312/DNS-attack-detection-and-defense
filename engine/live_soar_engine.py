@@ -90,6 +90,8 @@ def process_packet(pkt) -> None:
         if not (pkt.haslayer(IP) and pkt.haslayer(UDP) and pkt.haslayer(DNS)):
             return
         dns = pkt[DNS]
+        if dns.qr != 0:
+            return
         if not dns.qd:
             return
         qd = dns.qd
