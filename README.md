@@ -55,3 +55,13 @@ sudo bash scripts/run_live_engine.sh
 - 본 저장소는 **방어(탐지/대응) 목적** 전용입니다.
 - dnscat2 실행 자동화 및 공격 자동화 코드는 포함하지 않습니다.
 - 차단 스크립트는 반드시 실습망에서만 사용하세요.
+
+
+## Live IDS/IPS 구성 파일
+
+- `engine/live_soar_engine.py`: 실시간 수집/분석/대응 엔진
+- `requirements-live.txt`: live 엔진 전용 의존성
+- `scripts/run_live_engine.sh`: live 엔진 실행 래퍼
+- `rules/ip_blacklist.txt`: IP 차단 정책 목록
+- `rules/domain_blacklist.txt`: 도메인 차단 목록
+- `rules/domain_whitelist.txt`: 도메인 허용 목록
