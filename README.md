@@ -117,6 +117,9 @@ python run.py plot pcaps/normal_dns.pcap pcaps/dnscat2_connect.pcap
 
 # 7) HIGH verdict 시 iptables 차단 (Linux, sudo 필요)
 python run.py detect pcaps/dnscat2_connect.pcap --block --live
+
+# 8) 실시간 Live SOAR 엔진 실행 (root 권한 권장)
+python run.py live-soar
 ```
 
 ## CLI 명령어 (`run.py`)
@@ -129,6 +132,7 @@ python run.py detect pcaps/dnscat2_connect.pcap --block --live
 | `python run.py detect <pcap>` | 위험도 점수 + verdict + 로그 |
 | `python run.py detect <pcap> --block --live` | HIGH 시 iptables 실제 차단 |
 | `python run.py plot <pcap> ...` | qname 길이/entropy/qtype 그래프 |
+| `python run.py live-soar` | 실시간 DNS Live SOAR 탐지/차단 엔진 실행 |
 
 개별 스크립트도 직접 실행할 수 있습니다.
 

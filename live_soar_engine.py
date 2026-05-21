@@ -25,11 +25,12 @@ from scapy.layers.inet import IP, UDP
 from scapy.layers.inet6 import IPv6
 from scapy.layers.dns import DNS, DNSQR
 
-BLOCK_SCRIPT_PATH: str = "./block_ip.sh"
-UNBLOCK_SCRIPT_PATH: str = "./unblock_ip.sh"
-RESULT_DIR: str = "results"
-SIEM_LOG_PATH: str = "results/siem_dns_detect.json"
-DB_PATH: str = "results/live_soar.db"
+BASE_DIR: str = os.path.dirname(os.path.abspath(__file__))
+BLOCK_SCRIPT_PATH: str = os.path.join(BASE_DIR, "scripts", "block_ip.sh")
+UNBLOCK_SCRIPT_PATH: str = os.path.join(BASE_DIR, "scripts", "unblock_ip.sh")
+RESULT_DIR: str = os.path.join(BASE_DIR, "results")
+SIEM_LOG_PATH: str = os.path.join(RESULT_DIR, "siem_dns_detect.json")
+DB_PATH: str = os.path.join(RESULT_DIR, "live_soar.db")
 WEBHOOK_URL: str = os.environ.get("LIVE_SOAR_WEBHOOK_URL", "")
 
 MAX_QUEUE_SIZE: int = 1000
@@ -39,6 +40,7 @@ WEBHOOK_CACHE_MAXSIZE: int = 10000
 FORK_COOLDOWN_TTL: float = 5.0
 WEBHOOK_COOLDOWN_TTL: float = 30.0
 BLOCK_DURATION_TTL: float = 300.0
+BLOCK_MODE: str = os.environ.get("LIVE_SOAR_BLOCK_MODE", "kali_input")
 
 
 def log_stderr(level: str, message: str) -> None:
@@ -293,7 +295,7 @@ class LiveSOAREngine:
                 try:
                     for pat in self.whitelist_patterns:
                         if pat.search(qname, timeout=0.01) is not None:
-                            return
+                            continue
                     _ = regex.search(r"^[a-z0-9\-\.]+$", target_string, timeout=0.01)
                 except (regex.TimeoutError, TimeoutError, regex.error):
                     traceback.print_exc(file=sys.stderr)
@@ -424,7 +426,7 @@ class LiveSOAREngine:
                     if now_mono - prev < FORK_COOLDOWN_TTL:
                         return
                     self.fork_cooldown[safe_ip] = now_mono
-                subprocess.Popen([BLOCK_SCRIPT_PATH, safe_ip], shell=False, start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                subprocess.Popen([BLOCK_SCRIPT_PATH, safe_ip, BLOCK_MODE], shell=False, start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 unblock_at: float = now_mono + BLOCK_DURATION_TTL
                 cur.execute(
                     "INSERT INTO blocked_ips (ip, is_active, blocked_at, unblock_at_mono) VALUES (?,1,?,?) "
@@ -567,7 +569,7 @@ class LiveSOAREngine:
         safe_ip: str = self.sanitize_ip(ip_value)
         if not safe_ip:
             return
-        subprocess.Popen([UNBLOCK_SCRIPT_PATH, safe_ip], shell=False, start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.Popen([UNBLOCK_SCRIPT_PATH, safe_ip, BLOCK_MODE], shell=False, start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         with self.db_lock:
             if self.conn is None:
                 return
