@@ -38,8 +38,6 @@ def main() -> None:
     sub.add_parser("sample", help="테스트용 샘플 pcap 생성")
     sub.add_parser("live", help="실시간 SOAR 엔진 실행")
 
-    p_live = sub.add_parser("live-soar", help="실시간 Live SOAR DNS 탐지/대응 엔진 실행")
-
     args = parser.parse_args()
 
     if args.cmd == "analyze":
@@ -65,10 +63,6 @@ def main() -> None:
 
     if args.cmd == "live":
         raise SystemExit(run_script(ENGINE / "live_soar_engine.py", []))
-
-    if args.cmd == "live-soar":
-        cmd = [sys.executable, str(ROOT / "live_soar_engine.py")]
-        sys.exit(subprocess.call(cmd))
 
 
 if __name__ == "__main__":

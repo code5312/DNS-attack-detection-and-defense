@@ -36,6 +36,12 @@ python run.py plot <pcap>
 sudo bash scripts/run_live_engine.sh
 ```
 
+
+## Offline vs Live 역할 분리
+
+- **Offline 분석 (`run.py analyze/detect/compare/plot`)**: 저장된 pcap을 재현 가능하게 분석하고 보고서/그래프를 생성합니다.
+- **Live 분석 (`scripts/run_live_engine.sh` 또는 `run.py live`)**: 실시간 DNS 스트림을 감시하고 SIEM NDJSON/차단 연동을 수행합니다.
+
 ## Live SOAR 포인트
 
 - `sniff(iface="any", filter="udp port 53", store=0)` 기반 실시간 수집
