@@ -1,17 +1,4 @@
 #!/bin/bash
-# iptables 기반 일시 차단
-# 사용: sudo ./block_ip.sh <src_ip> [mode]
-# mode: kali_input (기본) | ubuntu_output | gateway_forward
-#
-# Kali 서버에서 Ubuntu 피해자 차단 (실습 권장):
-#   sudo ./block_ip.sh 172.30.1.44 kali_input
-#
-# Ubuntu 로컬 DNS 송신 차단:
-#   sudo ./block_ip.sh 172.30.1.44 ubuntu_output
-#
-# 게이트웨이/Sensor FORWARD 차단:
-#   sudo ./block_ip.sh 172.30.1.44 gateway_forward
-
 set -euo pipefail
 
 SRC_IP="${1:?Usage: block_ip.sh <src_ip> [mode]}"
@@ -35,8 +22,24 @@ case "$MODE" in
     ;;
 esac
 
-echo "[*] Blocking UDP/53 C2 channel (mode=$MODE) for $SRC_IP"
-echo "[*] Command: ${RULE[*]}"
+case "$MODE" in
+  kali_input)
+    CHECK=(iptables -C INPUT -s "$SRC_IP" -p udp --dport 53 -j DROP)
+    ;;
+  ubuntu_output)
+    CHECK=(iptables -C OUTPUT -p udp --dport 53 -j DROP)
+    ;;
+  gateway_forward)
+    CHECK=(iptables -C FORWARD -s "$SRC_IP" -p udp --dport 53 -j DROP)
+    ;;
+esac
+
+if "${CHECK[@]}" 2>/dev/null; then
+  echo "[*] Rule already exists for $SRC_IP (mode=$MODE)"
+  exit 0
+fi
+
+echo "[*] Applying block rule: ${RULE[*]}"
 "${RULE[@]}"
 echo "$(date -Iseconds) BLOCK $SRC_IP mode=$MODE rule=${RULE[*]}" >> "$LOG_FILE"
-echo "[+] Block rule applied. Log: $LOG_FILE"
+echo "[+] Block rule applied"

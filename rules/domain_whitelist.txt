@@ -1,0 +1,4 @@
+# One domain per line
+google.com
+github.com
+microsoft.com

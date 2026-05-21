@@ -1,15 +1,5 @@
 #!/usr/bin/env python3
-"""
-DNS 터널링 탐지·대응 — 통합 실행 진입점
-
-실습 흐름:
-  1. pcaps/ 에 pcap 수집
-  2. python run.py analyze pcaps/normal_dns.pcap
-  3. python run.py detect pcaps/dnscat2_connect.pcap
-  4. python run.py compare pcaps/normal_dns.pcap pcaps/dnscat2_connect.pcap
-  5. python run.py plot pcaps/normal_dns.pcap pcaps/dnscat2_connect.pcap
-  6. python run.py detect pcaps/dnscat2_connect.pcap --block --live  (Ubuntu/Kali)
-"""
+from __future__ import annotations
 
 import argparse
 import subprocess
@@ -18,18 +8,19 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 SCRIPTS = ROOT / "scripts"
+ENGINE = ROOT / "engine"
 
 
-def run_script(name: str, args: list[str]) -> int:
-    cmd = [sys.executable, str(SCRIPTS / name)] + args
+def run_script(path: Path, args: list[str]) -> int:
+    cmd = [sys.executable, str(path)] + args
     return subprocess.call(cmd)
 
 
-def main():
-    parser = argparse.ArgumentParser(description="DNS Tunneling Detection")
+def main() -> None:
+    parser = argparse.ArgumentParser(description="DNS Tunneling Detection/Response CLI")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
-    p_an = sub.add_parser("analyze", help="Scapy DNS 분석 → CSV")
+    p_an = sub.add_parser("analyze", help="Scapy DNS 분석 → CSV/JSON")
     p_an.add_argument("pcap", nargs="+")
     p_an.add_argument("--compare", action="store_true")
 
@@ -44,32 +35,36 @@ def main():
     p_plot = sub.add_parser("plot", help="결과 그래프 생성")
     p_plot.add_argument("pcap", nargs="+")
 
-    p_gen = sub.add_parser("sample", help="테스트용 샘플 pcap 생성")
+    sub.add_parser("sample", help="테스트용 샘플 pcap 생성")
+    sub.add_parser("live", help="실시간 SOAR 엔진 실행")
 
     p_live = sub.add_parser("live-soar", help="실시간 Live SOAR DNS 탐지/대응 엔진 실행")
 
     args = parser.parse_args()
 
     if args.cmd == "analyze":
-        a = ["--compare"] if args.compare else []
-        sys.exit(run_script("dns_analyzer.py", list(args.pcap) + a))
+        extra = ["--compare"] if args.compare else []
+        raise SystemExit(run_script(SCRIPTS / "dns_analyzer.py", list(args.pcap) + extra))
 
     if args.cmd == "detect":
-        a = [args.pcap]
+        extra = [args.pcap]
         if args.block:
-            a.append("--block")
+            extra.append("--block")
         if args.live:
-            a.append("--live")
-        sys.exit(run_script("risk_engine.py", a))
+            extra.append("--live")
+        raise SystemExit(run_script(SCRIPTS / "risk_engine.py", extra))
 
     if args.cmd == "compare":
-        sys.exit(run_script("dns_analyzer.py", list(args.pcap) + ["--compare"]))
+        raise SystemExit(run_script(SCRIPTS / "dns_analyzer.py", list(args.pcap) + ["--compare"]))
 
     if args.cmd == "plot":
-        sys.exit(run_script("plot_results.py", list(args.pcap)))
+        raise SystemExit(run_script(SCRIPTS / "plot_results.py", list(args.pcap)))
 
     if args.cmd == "sample":
-        sys.exit(run_script("generate_sample_pcap.py", []))
+        raise SystemExit(run_script(SCRIPTS / "generate_sample_pcap.py", []))
+
+    if args.cmd == "live":
+        raise SystemExit(run_script(ENGINE / "live_soar_engine.py", []))
 
     if args.cmd == "live-soar":
         cmd = [sys.executable, str(ROOT / "live_soar_engine.py")]
