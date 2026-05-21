@@ -15,3 +15,11 @@ alert udp any any -> any 53 (msg:"DNS_TUNNEL suspicious MX query"; \
 
 alert udp any any -> any 53 (msg:"DNS_TUNNEL long DNS payload"; \
   dsize:>200; classtype:policy-violation; sid:1000005; rev:2;)
+
+
+# heuristic-like signatures for encoded/random labels
+alert udp any any -> any 53 (msg:"DNS_TUNNEL base32-like label pattern";   pcre:"/([a-z2-7]{20,})\./i"; classtype:policy-violation; sid:1000006; rev:1;)
+
+alert udp any any -> any 53 (msg:"DNS_TUNNEL hex-like label pattern";   pcre:"/([a-f0-9]{24,})\./i"; classtype:policy-violation; sid:1000007; rev:1;)
+
+alert udp any any -> any 53 (msg:"DNS_TUNNEL random long subdomain pattern";   pcre:"/([a-z0-9]{30,})\./i"; classtype:policy-violation; sid:1000008; rev:1;)

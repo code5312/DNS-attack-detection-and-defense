@@ -52,6 +52,9 @@ blacklist:
   - attacker.lab
   - evil.lab
   - malicious.local
+  ip_file: rules/ip_blacklist.txt
+  domain_file: rules/domain_blacklist.txt
+  whitelist_file: rules/domain_whitelist.txt
 
 response:
   block_mode: kali_input
@@ -67,3 +70,11 @@ live_engine:
   ip_blacklist_file: rules/ip_blacklist.txt
   domain_blacklist_file: rules/domain_blacklist.txt
   domain_whitelist_file: rules/domain_whitelist.txt
+
+
+live:
+  enabled: true
+  iface: any
+  bpf_filter: "udp port 53"
+  ndjson_output: results/siem_dns_detect.json
+  state_db: results/live_soar_state.db

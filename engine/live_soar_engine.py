@@ -25,9 +25,29 @@ NDJSON_PATH = RESULTS_DIR / "siem_dns_detect.json"
 DB_PATH = RESULTS_DIR / "live_soar_state.db"
 BLOCK_SCRIPT = ROOT / "scripts" / "block_ip.sh"
 UNBLOCK_SCRIPT = ROOT / "scripts" / "unblock_ip.sh"
+IP_BLACKLIST_FILE = ROOT / "rules" / "ip_blacklist.txt"
+DOMAIN_BLACKLIST_FILE = ROOT / "rules" / "domain_blacklist.txt"
+DOMAIN_WHITELIST_FILE = ROOT / "rules" / "domain_whitelist.txt"
 
-WHITELIST = {"google.com", "github.com", "microsoft.com"}
-BLACKLIST = {"attacker.lab", "evil.lab", "malicious.local"}
+
+def load_line_set(path: Path) -> set[str]:
+    out: set[str] = set()
+    try:
+        if not path.exists():
+            return out
+        for ln in path.read_text(encoding="utf-8", errors="replace").splitlines():
+            t = ln.strip().lower()
+            if not t or t.startswith("#"):
+                continue
+            out.add(t)
+    except Exception:
+        return out
+    return out
+
+
+WHITELIST = load_line_set(DOMAIN_WHITELIST_FILE) or {"google.com", "github.com", "microsoft.com"}
+BLACKLIST = load_line_set(DOMAIN_BLACKLIST_FILE) or {"attacker.lab", "evil.lab", "malicious.local"}
+IP_BLACKLIST = load_line_set(IP_BLACKLIST_FILE)
 
 stop_event = threading.Event()
 packet_queue: queue.Queue[dict[str, Any]] = queue.Queue(maxsize=1000)
@@ -212,6 +232,9 @@ class AnalysisWorker(threading.Thread):
                 if base in BLACKLIST:
                     risk += 4
                     reasons.append("blacklist")
+                if src_ip in IP_BLACKLIST:
+                    risk += 7
+                    reasons.append("ip_blacklist")
 
                 severity = "CRITICAL" if risk >= 7 else "INFO"
                 out = {
