@@ -24,8 +24,8 @@ case "$MODE" in
     CHECK=(iptables -C INPUT -s "$SRC_IP" -p udp --dport 53 -j DROP)
     ;;
   ubuntu_output)
-    RULE=(iptables -A OUTPUT -p udp --dport 53 -j DROP)
-    CHECK=(iptables -C OUTPUT -p udp --dport 53 -j DROP)
+    RULE=(iptables -A OUTPUT -s "$SRC_IP" -p udp --dport 53 -j DROP)
+    CHECK=(iptables -C OUTPUT -s "$SRC_IP" -p udp --dport 53 -j DROP)
     ;;
   gateway_forward)
     RULE=(iptables -A FORWARD -s "$SRC_IP" -p udp --dport 53 -j DROP)

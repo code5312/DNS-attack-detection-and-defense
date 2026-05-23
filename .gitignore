@@ -6,4 +6,3 @@ results/*.json
 results/*.log
 results/snort_alerts.log
 pcaps/*.pcap
-

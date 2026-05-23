@@ -279,7 +279,11 @@ class DNSAnalyzer:
             suspicious_qtype_ratio=round(susp / n, 2),
             unique_subdomain_ratio=round(unique_subs, 2),
             repeated_base_domain_max=max(base_cnt.values()) if base_cnt else 0,
-            attacker_domain_hits=sum(1 for r in queries if self.suspicious_domain in r.qname),
+            attacker_domain_hits=sum(
+                1
+                for r in queries
+                if r.qname == self.suspicious_domain or r.qname.endswith("." + self.suspicious_domain)
+            ),
             avg_label_count=round(sum(r.label_count for r in queries) / n, 2),
             avg_digit_ratio=round(sum(r.digit_ratio for r in queries) / n, 2),
             avg_alpha_ratio=round(sum(r.alpha_ratio for r in queries) / n, 2),

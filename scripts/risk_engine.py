@@ -62,6 +62,18 @@ def load_config() -> dict:
     return {}
 
 
+def load_line_list(path: Path) -> list[str]:
+    if not path.exists():
+        return []
+    out: list[str] = []
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        t = line.strip().lower()
+        if not t or t.startswith("#"):
+            continue
+        out.append(t)
+    return out
+
+
 def parse_snort_alerts(log_path: Path) -> dict[str, int]:
     if not log_path.exists():
         return {}
@@ -87,7 +99,16 @@ class RiskEngine:
         self.high_max = levels.get("high_max", 11)
         snort_cfg = cfg.get("snort", {})
         self.snort_log = ROOT / snort_cfg.get("alert_log", "results/snort_alerts.log")
-        self.blacklist = set(cfg.get("blacklist", ["attacker.lab", "evil.lab", "malicious.local"]))
+        bl = cfg.get("blacklist", {})
+        if isinstance(bl, dict):
+            domains = bl.get("domains", ["attacker.lab", "evil.lab", "malicious.local"])
+            domain_file = ROOT / bl.get("domain_file", "rules/domain_blacklist.txt")
+        else:
+            domains = bl or ["attacker.lab", "evil.lab", "malicious.local"]
+            domain_file = ROOT / "rules/domain_blacklist.txt"
+        merged = {d.lower() for d in domains if isinstance(d, str)}
+        merged.update(load_line_list(domain_file))
+        self.blacklist = merged
 
     def score_host(self, stats: HostStats, snort_count: int = 0, blacklist_hit: int = 0) -> RiskAssessment:
         t, s = self.thresholds, self.scores

@@ -4,14 +4,8 @@
 alert udp any any -> any 53 (msg:"DNS_TUNNEL attacker.lab domain pattern"; \
   content:"attacker.lab"; nocase; classtype:policy-violation; sid:1000001; rev:2;)
 
-alert udp any any -> any 53 (msg:"DNS_TUNNEL suspicious TXT query"; \
-  byte_test:2,=,16,2,relative; classtype:policy-violation; sid:1000002; rev:2;)
 
-alert udp any any -> any 53 (msg:"DNS_TUNNEL suspicious CNAME query"; \
-  byte_test:2,=,5,2,relative; classtype:policy-violation; sid:1000003; rev:2;)
 
-alert udp any any -> any 53 (msg:"DNS_TUNNEL suspicious MX query"; \
-  byte_test:2,=,15,2,relative; classtype:policy-violation; sid:1000004; rev:2;)
 
 alert udp any any -> any 53 (msg:"DNS_TUNNEL long DNS payload"; \
   dsize:>200; classtype:policy-violation; sid:1000005; rev:2;)
@@ -23,3 +17,7 @@ alert udp any any -> any 53 (msg:"DNS_TUNNEL base32-like label pattern";   pcre:
 alert udp any any -> any 53 (msg:"DNS_TUNNEL hex-like label pattern";   pcre:"/([a-f0-9]{24,})\./i"; classtype:policy-violation; sid:1000007; rev:1;)
 
 alert udp any any -> any 53 (msg:"DNS_TUNNEL random long subdomain pattern";   pcre:"/([a-z0-9]{30,})\./i"; classtype:policy-violation; sid:1000008; rev:1;)
+
+
+# temporary heuristics until dns preprocessor query-type options are wired
+alert udp any any -> any 53 (msg:"DNS_TUNNEL suspicious DNS payload (TXT/CNAME/MX heuristic)"; dsize:>90; classtype:policy-violation; sid:1000012; rev:1;)
