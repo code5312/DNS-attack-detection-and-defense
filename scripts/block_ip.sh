@@ -20,6 +20,18 @@ for oct in "$o1" "$o2" "$o3" "$o4"; do
   fi
 done
 
+if [[ ! "$SRC_IP" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+  echo "Invalid IPv4 format: $SRC_IP"
+  exit 1
+fi
+IFS='.' read -r o1 o2 o3 o4 <<< "$SRC_IP"
+for oct in "$o1" "$o2" "$o3" "$o4"; do
+  if (( oct < 0 || oct > 255 )); then
+    echo "Invalid IPv4 octet in: $SRC_IP"
+    exit 1
+  fi
+done
+
 case "$MODE" in
   kali_input)
     RULE=(iptables -A INPUT -s "$SRC_IP" -p udp --dport 53 -j DROP)
