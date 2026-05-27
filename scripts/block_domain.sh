@@ -11,7 +11,7 @@ DOMAIN_LIST="${ROOT_DIR}/rules/domain_blacklist.txt"
 
 is_valid_domain() {
   local d="$1"
-  [[ "$d" =~ ^[A-Za-z0-9.-]+$ ]]
+  [[ "$d" =~ ^([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(\.([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?))*$ ]]
 }
 
 apply_single() {
@@ -33,7 +33,8 @@ if [[ "$APPLY_MODE" == "--apply" ]]; then
     echo "Domain blacklist file not found: $DOMAIN_LIST"
     exit 1
   fi
-  TMP_FILE="$(mktemp)"
+  TMP_FILE="$(mktemp "/tmp/dns_sinkhole.XXXXXX")"
+  chmod 600 "$TMP_FILE"
   while IFS= read -r line; do
     line="${line%%#*}"
     line="$(echo "$line" | xargs || true)"

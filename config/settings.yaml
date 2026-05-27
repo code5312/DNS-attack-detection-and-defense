@@ -25,6 +25,7 @@ thresholds:
   base32_like_count: 5
   hex_like_count: 5
   unique_subdomain_ratio_low: 0.3
+  snort_alert_cap: 5
 
 risk_scores:
   avg_qname_length: 2
@@ -67,3 +68,14 @@ live:
   bpf_filter: "udp port 53"
   ndjson_output: results/siem_dns_detect.json
   state_db: results/live_soar_state.db
+
+schema:
+  version: 1
+  require_keys:
+    - snort
+    - thresholds
+    - risk_scores
+    - risk_levels
+    - blacklist
+    - response
+    - live

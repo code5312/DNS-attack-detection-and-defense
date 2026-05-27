@@ -3,6 +3,10 @@
 # 사용: sudo ./capture_dns.sh eth0 normal_dns
 
 IFACE="${1:-eth0}"
+if [[ ! "$IFACE" =~ ^[a-zA-Z0-9._:-]+$ ]]; then
+  echo "Invalid interface: $IFACE"
+  exit 1
+fi
 NAME="${2:-dns_capture}"
 PCAP_DIR="$(dirname "$0")/../pcaps"
 mkdir -p "$PCAP_DIR"

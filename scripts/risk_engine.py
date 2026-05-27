@@ -5,6 +5,7 @@ import argparse
 import csv
 import json
 import re
+import ipaddress
 import subprocess
 import sys
 from dataclasses import asdict, dataclass
@@ -58,7 +59,12 @@ def load_config() -> dict:
     cfg_path = ROOT / "config" / "settings.yaml"
     if cfg_path.exists():
         with open(cfg_path, encoding="utf-8") as f:
-            return yaml.safe_load(f)
+            cfg = yaml.safe_load(f) or {}
+        req = cfg.get("schema", {}).get("require_keys", [])
+        for k in req:
+            if k not in cfg:
+                raise ValueError(f"Missing required config key: {k}")
+        return cfg
     return {}
 
 
@@ -74,21 +80,37 @@ def load_line_list(path: Path) -> list[str]:
     return out
 
 
-def parse_snort_alerts(log_path: Path) -> dict[str, int]:
+def parse_snort_alerts(log_path: Path, sid_allow: set[str] | None = None) -> dict[str, int]:
     if not log_path.exists():
         return {}
-    ip_re = re.compile(r"(\d{1,3}(?:\.\d{1,3}){3})")
+    sid_allow = sid_allow or set()
+    ip_port_re = re.compile(r"(\d{1,3}(?:\.\d{1,3}){3}):(\d+)")
+    sid_re = re.compile(r"\[(\d+):(\d+):(\d+)\]")
     counts: dict[str, int] = {}
     for line in log_path.read_text(encoding="utf-8", errors="replace").splitlines():
-        if line.startswith("#") or not line.strip():
+        if line.startswith("#") or not line.strip() or "->" not in line:
             continue
-        arrow = line.split("->")
-        if len(arrow) >= 1:
-            left = arrow[0]
-            ips = ip_re.findall(left)
-            if ips:
-                src = ips[-1]
-                counts[src] = counts.get(src, 0) + 1
+        sid_match = sid_re.search(line)
+        if sid_allow and sid_match:
+            sid = sid_match.group(2)
+            if sid not in sid_allow:
+                continue
+        left, right = line.split("->", 1)
+        src_pairs = ip_port_re.findall(left)
+        dst_pairs = ip_port_re.findall(right)
+        if not src_pairs or not dst_pairs:
+            continue
+        src_ip, src_port = src_pairs[-1]
+        _dst_ip, dst_port = dst_pairs[0]
+        try:
+            ipaddress.ip_address(src_ip)
+        except ValueError:
+            continue
+        if dst_port != "53":
+            continue
+        if src_port == "53":
+            continue
+        counts[src_ip] = counts.get(src_ip, 0) + 1
     return counts
 
 
@@ -112,9 +134,11 @@ class RiskEngine:
             domain_file = ROOT / "rules/domain_blacklist.txt"
         merged = {d.lower() for d in domains if isinstance(d, str)}
         merged.update(load_line_list(domain_file))
-        self.blacklist = merged
+        self.blacklist = {d for d in merged if d}
         whitelist_file = ROOT / (bl.get("whitelist_file", "rules/domain_whitelist.txt") if isinstance(bl, dict) else "rules/domain_whitelist.txt")
-        self.whitelist = set(load_line_list(whitelist_file))
+        self.whitelist = {d for d in load_line_list(whitelist_file) if d}
+        self.snort_sid_allow = {"1000001", "1000005", "1000006", "1000007", "1000008", "1000012"}
+
 
     def score_host(self, stats: HostStats, snort_count: int = 0, blacklist_hit: int = 0) -> RiskAssessment:
         t, s = self.thresholds, self.scores
@@ -206,7 +230,7 @@ class RiskEngine:
         analyzer = DNSAnalyzer(suspicious_domain=suspicious_domain)
         analyzer.analyze_pcap(pcap_path)
         host_stats = analyzer.compute_all_host_stats()
-        snort_counts = parse_snort_alerts(self.snort_log)
+        snort_counts = parse_snort_alerts(self.snort_log, sid_allow=self.snort_sid_allow)
         blacklist_hits = self._blacklist_hits_by_src(analyzer)
         return [
             self.score_host(s, snort_counts.get(ip, 0), blacklist_hits.get(ip, 0))
