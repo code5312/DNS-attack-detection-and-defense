@@ -147,6 +147,7 @@ class HostStats:
     hex_like_count: int = 0
     qtype_distribution: dict = field(default_factory=dict)
     window_seconds: float = 0.0
+    max_query_count_10s: int = 0
 
 
 class DNSAnalyzer:
@@ -261,6 +262,17 @@ class DNSAnalyzer:
 
         nxdomain_count = sum(1 for r in responses if r.is_nxdomain)
 
+        # real sliding-window max query count over 10s
+        q_ts = sorted(r.timestamp for r in queries)
+        left = 0
+        max_q10 = 0
+        for right, ts in enumerate(q_ts):
+            while ts - q_ts[left] > 10.0:
+                left += 1
+            curr = right - left + 1
+            if curr > max_q10:
+                max_q10 = curr
+
         return HostStats(
             src_ip=src_ip,
             query_count=n,
@@ -292,6 +304,7 @@ class DNSAnalyzer:
             hex_like_count=sum(1 for r in queries if r.hex_like),
             qtype_distribution=qtype_dist,
             window_seconds=round(duration, 2),
+            max_query_count_10s=max_q10,
         )
 
     def compute_all_host_stats(self) -> dict[str, HostStats]:

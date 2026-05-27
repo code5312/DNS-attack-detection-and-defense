@@ -82,9 +82,13 @@ def parse_snort_alerts(log_path: Path) -> dict[str, int]:
     for line in log_path.read_text(encoding="utf-8", errors="replace").splitlines():
         if line.startswith("#") or not line.strip():
             continue
-        ips = ip_re.findall(line)
-        if ips:
-            counts[ips[0]] = counts.get(ips[0], 0) + 1
+        arrow = line.split("->")
+        if len(arrow) >= 1:
+            left = arrow[0]
+            ips = ip_re.findall(left)
+            if ips:
+                src = ips[-1]
+                counts[src] = counts.get(src, 0) + 1
     return counts
 
 
@@ -109,12 +113,14 @@ class RiskEngine:
         merged = {d.lower() for d in domains if isinstance(d, str)}
         merged.update(load_line_list(domain_file))
         self.blacklist = merged
+        whitelist_file = ROOT / (bl.get("whitelist_file", "rules/domain_whitelist.txt") if isinstance(bl, dict) else "rules/domain_whitelist.txt")
+        self.whitelist = set(load_line_list(whitelist_file))
 
     def score_host(self, stats: HostStats, snort_count: int = 0, blacklist_hit: int = 0) -> RiskAssessment:
         t, s = self.thresholds, self.scores
         breakdown: dict[str, int] = {}
 
-        query_count_10s = int(round(stats.query_count * (10.0 / max(stats.window_seconds, 0.001))))
+        query_count_10s = int(getattr(stats, "max_query_count_10s", 0))
 
         if stats.avg_qname_length > t.get("avg_qname_length", 50):
             breakdown["avg_qname_length"] = s.get("avg_qname_length", 2)
@@ -138,8 +144,9 @@ class RiskEngine:
             breakdown["base32_like_count"] = s.get("base32_like_count", 2)
         if stats.hex_like_count > t.get("hex_like_count", 5):
             breakdown["hex_like_count"] = s.get("hex_like_count", 2)
-        if snort_count > 0:
-            breakdown["snort_alert"] = s.get("snort_alert", 3) * snort_count
+        snort_effective = min(snort_count, int(t.get("snort_alert_cap", 5)))
+        if snort_effective > 0:
+            breakdown["snort_alert"] = s.get("snort_alert", 3) * snort_effective
         if stats.attacker_domain_hits > 0:
             breakdown["attacker_domain"] = s.get("attacker_domain", 2)
         if blacklist_hit > 0:
@@ -188,6 +195,8 @@ class RiskEngine:
         hits: dict[str, int] = {}
         for rec in analyzer.records:
             if rec.is_response:
+                continue
+            if rec.base_domain in self.whitelist:
                 continue
             if rec.base_domain in self.blacklist:
                 hits[rec.src_ip] = hits.get(rec.src_ip, 0) + 1
