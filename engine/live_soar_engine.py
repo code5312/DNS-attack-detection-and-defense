@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import json
 import math
-import os
 import queue
 import signal
 import sqlite3
@@ -16,7 +15,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import regex
 from scapy.all import DNS, IP, UDP, sniff  # type: ignore
 
 ROOT = Path(__file__).resolve().parent.parent
