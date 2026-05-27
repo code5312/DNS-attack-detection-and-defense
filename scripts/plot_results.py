@@ -97,7 +97,11 @@ def plot_risk_csv(csv_path: Path, out_dir: Path) -> None:
 
     ips, scores, levels = [], [], []
     with open(csv_path, encoding="utf-8") as f:
-        for row in csv.DictReader(f):
+        reader = csv.DictReader(f)
+        required = {"src_ip", "risk_score", "verdict_level"}
+        if not required.issubset(set(reader.fieldnames or [])):
+            raise ValueError(f"CSV missing required fields: {required}")
+        for row in reader:
             ips.append(row["src_ip"])
             scores.append(int(row["risk_score"]))
             levels.append(row["verdict_level"])
