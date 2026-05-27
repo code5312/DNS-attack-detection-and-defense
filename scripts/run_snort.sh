@@ -1,14 +1,23 @@
 #!/bin/bash
-# Snort 룰 테스트 (rules/dns_tunnel.rules)
-# sudo snort -r pcaps/dnscat2_connect.pcap -c snort.conf -A fast -l results/
+set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 RULES="$ROOT/rules/dns_tunnel.rules"
-LOG="$ROOT/results/snort_alerts.log"
+OUT_DIR="$ROOT/results"
+PCAP="${1:-$ROOT/pcaps/dnscat2_connect.pcap}"
+SNORT_CONF="${2:-}"
 
-echo "[*] Snort rules: $RULES"
-echo "[*] Alert log:   $LOG"
-echo ""
-echo "pcap 테스트 예:"
-echo "  sudo snort -r $ROOT/pcaps/dnscat2_connect.pcap \\"
-echo "    -A fast -l $ROOT/results -c <snort.conf including $RULES>"
+mkdir -p "$OUT_DIR"
+
+if [[ -z "$SNORT_CONF" ]]; then
+  echo "Usage: sudo bash scripts/run_snort.sh <pcap_path> <snort_conf_path>"
+  echo "Example: sudo bash scripts/run_snort.sh $PCAP /etc/snort/snort.conf"
+  exit 1
+fi
+
+echo "[*] Running Snort"
+echo "    pcap : $PCAP"
+echo "    rules: $RULES"
+echo "    conf : $SNORT_CONF"
+
+sudo snort -r "$PCAP" -A fast -l "$OUT_DIR" -c "$SNORT_CONF"
