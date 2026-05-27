@@ -1,0 +1,4 @@
+# One domain per line
+attacker.lab
+evil.lab
+malicious.local
