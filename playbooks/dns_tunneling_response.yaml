@@ -1,0 +1,40 @@
+# DNS 터널링 대응 Playbook
+#
+# severity(risk_levels 임계값 기준 NORMAL < SUSPICIOUS < MALICIOUS < CRITICAL)에
+# 따라 실행할 액션을 정의한다. scripts/risk_engine.py(offline)와
+# engine/live_soar_engine.py(live)가 이 파일 하나를 공유한다.
+#
+# 매칭 규칙: 위에서부터 순서대로 검사하고, 현재 이벤트의 severity가 규칙의
+# min_severity 이상이면 그 규칙의 액션만 실행한 뒤 그 아래 규칙은 보지
+# 않는다. 그래서 등급이 높은(더 엄격한) 규칙을 먼저 적어야 한다.
+#
+# 지원 액션 타입
+#   block_ip  - iptables 차단
+#               params: mode(옵션, 생략 시 response.block_mode),
+#                       ttl_seconds(옵션, 생략 시 response.block_ttl_seconds)
+#               * live 엔진      : 즉시 실행 + TTL 경과 후 자동 해제
+#               * offline 엔진   : `run.py detect --block` 옵션이 있을 때만 실행되며
+#                                   기본은 dry-run, `--live`까지 줘야 실제 iptables 명령이 나간다
+#   notify    - 알림 기록
+#               params: channel(현재는 "log"만 지원 - results/notifications.log 에 append,
+#                       다른 값은 조용히 무시됨 - 향후 slack/webhook 채널 추가 지점)
+#   log_only  - 별도 동작 없음. CSV/JSON/NDJSON에는 어차피 다 기록되므로
+#               감사 로그 상 "검토는 했다"는 표시용.
+#
+# 조건 평가는 severity 등급 비교만 지원하며 임의 코드 실행(eval 등)은 쓰지
+# 않는다 - AGENTS.md의 live 엔진 안전 제약과 일치시키기 위함.
+#
+# 아래 기본값은 리팩토링 이전의 하드코딩 로직(risk_score가 suspicious_max를
+# 넘는 MALICIOUS/CRITICAL 등급에서 차단)과 동일하게 동작하도록 맞춰져 있다.
+# 필요에 맞게 이 파일만 수정하면 코드 변경 없이 대응 정책을 바꿀 수 있다.
+
+rules:
+  - when: { min_severity: MALICIOUS }
+    actions:
+      - type: block_ip
+      - type: notify
+        channel: log
+
+  - when: { min_severity: SUSPICIOUS }
+    actions:
+      - type: log_only

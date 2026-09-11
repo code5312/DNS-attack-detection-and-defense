@@ -1,13 +1,13 @@
 # DNS 터널링 탐지·대응 시스템
 
-**Snort(규칙 기반) · Scapy(행위 기반) · Risk Engine(점수화 기반)** 을 결합해 DNS 터널링을 탐지하고,
-SIEM 로깅과 자동 대응(iptables 차단 / DNS sinkhole / IP·도메인 블랙리스트)까지 이어지는
-통합 IDS/IPS 파이프라인입니다. VMware/VirtualBox 기반 실습망 환경을 기준으로 합니다.
+**Snort(규칙 기반) · Scapy(행위 기반) · Risk Engine(점수화 기반) · Playbook(정책 기반 대응)** 을 결합해
+DNS 터널링을 탐지하고, SIEM 로깅과 자동 대응(iptables 차단 / DNS sinkhole / IP·도메인 블랙리스트)까지
+이어지는 통합 IDS/IPS 파이프라인입니다. VMware/VirtualBox 기반 실습망 환경을 기준으로 합니다.
 
 > **방어(탐지/대응) 목적 전용 프로젝트입니다.** 공격 자동화 도구 실행이나 외부 C2 접속 코드는
 > 포함하지 않습니다. pcap 분석, DNS query feature 추출, 탐지 규칙 검증, SIEM 로그 생성,
 > blacklist/sinkhole/iptables 기반 방어 대응 실험이 목적입니다. 자세한 내용은
-> [안전 / 운영 원칙](#20-안전--운영-원칙)을 참고하세요.
+> [안전 / 운영 원칙](#21-안전--운영-원칙)을 참고하세요.
 
 ## 목차
 
@@ -21,16 +21,17 @@ SIEM 로깅과 자동 대응(iptables 차단 / DNS sinkhole / IP·도메인 블�
 8. [Offline 분석 흐름](#8-offline-분석-흐름)
 9. [Shannon Entropy 탐지 기준](#9-shannon-entropy-탐지-기준)
 10. [Risk Engine](#10-risk-engine)
-11. [Snort Rule Detection](#11-snort-rule-detection)
-12. [Live SOAR Engine](#12-live-soar-engine)
-13. [Blacklist / Whitelist 정책](#13-blacklist--whitelist-정책)
-14. [Defense Scripts](#14-defense-scripts)
-15. [dnsmasq sinkhole](#15-dnsmasq-sinkhole)
-16. [pcap 수집](#16-pcap-수집)
-17. [그래프 생성](#17-그래프-생성)
-18. [결과 파일 정리](#18-결과-파일-정리)
-19. [검증 명령](#19-검증-명령)
-20. [안전 / 운영 원칙](#20-안전--운영-원칙)
+11. [Playbook (대응 정책)](#11-playbook-대응-정책)
+12. [Snort Rule Detection](#12-snort-rule-detection)
+13. [Live SOAR Engine](#13-live-soar-engine)
+14. [Blacklist / Whitelist 정책](#14-blacklist--whitelist-정책)
+15. [Defense Scripts](#15-defense-scripts)
+16. [dnsmasq sinkhole](#16-dnsmasq-sinkhole)
+17. [pcap 수집](#17-pcap-수집)
+18. [그래프 생성](#18-그래프-생성)
+19. [결과 파일 정리](#19-결과-파일-정리)
+20. [검증 명령](#20-검증-명령)
+21. [안전 / 운영 원칙](#21-안전--운영-원칙)
 
 ## 1. 아키텍처
 
@@ -39,8 +40,9 @@ flowchart LR
     A[DNS Packet Capture] --> B[Snort Rule Detection]
     B --> C[Scapy Behavior Analysis]
     C --> D[Risk Score Engine]
-    D --> E[SIEM Log]
-    D --> F["IP Blacklist / Domain Sinkhole / iptables Block"]
+    D --> P["Playbook (severity → action)"]
+    P --> E[SIEM Log]
+    P --> F["IP Blacklist / Domain Sinkhole / iptables Block"]
 ```
 
 | 계층 | 주요 파일 | 역할 |
@@ -48,11 +50,12 @@ flowchart LR
 | Packet Capture | `scripts/capture_dns.sh`, `pcaps/` | UDP/53 DNS 트래픽을 pcap으로 저장 |
 | Snort Rule Detection | `rules/dns_tunnel.rules`, `scripts/run_snort.sh` | attacker.lab, 긴 DNS payload, Base32/HEX-like label, random subdomain heuristic 탐지 |
 | Offline Scapy Analyzer | `scripts/dns_analyzer.py` | pcap에서 DNS Query/Response feature 추출, NXDOMAIN 분석, Shannon entropy 계산 |
-| Risk Engine | `scripts/risk_engine.py` | analyzer 결과, Snort alert, 도메인/IP 블랙리스트 hit를 결합해 risk score/verdict 생성 |
-| Live SOAR Engine | `engine/live_soar_engine.py` | 실시간 DNS query sniff, queue 기반 분석, CRITICAL 차단, TTL 자동 해제, SIEM NDJSON 출력 |
+| Risk Engine | `scripts/risk_engine.py` | analyzer 결과, Snort alert, 도메인/IP 블랙리스트 hit를 결합해 risk score/severity 생성 |
+| Playbook | `playbooks/dns_tunneling_response.yaml`, `scripts/playbook.py` | severity별 대응 액션(`block_ip`/`notify`/`log_only`) 정의·매칭. offline/live 공용 |
+| Live SOAR Engine | `engine/live_soar_engine.py` | 실시간 DNS query sniff, queue 기반 분석, playbook 매칭 액션 실행, TTL 자동 해제, SIEM NDJSON 출력 |
 | Defense Scripts | `scripts/block_ip.sh`, `scripts/unblock_ip.sh`, `scripts/block_domain.sh` | iptables 차단/해제, dnsmasq sinkhole 설정 생성 |
 | Policy Files | `rules/ip_blacklist.txt`, `rules/domain_blacklist.txt`, `rules/domain_whitelist.txt` | IP/domain 차단 및 예외 정책 |
-| Configuration | `config/settings.yaml` | 임계값, 점수, blacklist 경로, live engine 출력 경로 설정 |
+| Configuration | `config/settings.yaml` | 임계값, 점수, blacklist 경로, playbook 경로, live engine 출력 경로 설정 |
 
 ## 2. 디렉터리 구조
 
@@ -68,6 +71,8 @@ DNS-attack-detection-and-defense/
 ├── engine/
 │   ├── README.md
 │   └── live_soar_engine.py
+├── playbooks/
+│   └── dns_tunneling_response.yaml
 ├── pcaps/
 ├── results/
 │   └── graphs/
@@ -81,6 +86,7 @@ DNS-attack-detection-and-defense/
     ├── capture_dns.sh
     ├── dns_analyzer.py
     ├── risk_engine.py
+    ├── playbook.py
     ├── plot_results.py
     ├── generate_sample_pcap.py
     ├── run_snort.sh
@@ -121,7 +127,7 @@ pip install -r requirements-live.txt
 
 `requirements.txt`는 offline 분석/그래프용 의존성(scapy, pyyaml, matplotlib)을 포함하고,
 `requirements-live.txt`는 live engine 실행에 필요한 최소 의존성(scapy, pyyaml, regex)을 포함합니다.
-live engine은 `config/settings.yaml`을 읽기 위해 `pyyaml`도 사용합니다.
+live engine은 `config/settings.yaml`과 playbook YAML을 읽기 위해 `pyyaml`도 사용합니다.
 
 ## 4. 빠른 시작
 
@@ -142,14 +148,14 @@ sudo bash scripts/run_live_engine.sh   # 실시간 SOAR 엔진 실행
 | 명령어 | 설명 | 비고 |
 |---|---|---|
 | `run.py analyze <pcap...> [--compare]` | Scapy 기반 DNS 분석 → CSV/JSON 저장 | `--compare` 없이 여러 pcap을 주면 각각 개별 분석·저장, `--compare`면 하나의 비교 리포트로 합침 |
-| `run.py detect <pcap> [--block] [--live]` | 위험도 점수·verdict 산출 및 로그 기록 | `--block`: HIGH/CRITICAL 시 차단 스크립트 실행(기본 dry-run) · `--live`: dry-run 없이 실제 차단 수행 |
+| `run.py detect <pcap> [--block] [--live]` | 위험도 점수·severity 산출 및 로그 기록 | `--block`: playbook의 `block_ip` 액션이 매칭되면 차단 스크립트 실행(기본 dry-run) · `--live`: dry-run 없이 실제 차단 수행 |
 | `run.py compare <normal_pcap> <attack_pcap>` | 정상 vs 공격 트래픽 비교 리포트 | `results/compare_summary.csv` 생성 |
 | `run.py plot <pcap...>` | qname 길이 / entropy / qtype 분포 그래프 생성 | `results/graphs/` 에 저장 |
 | `run.py plot --csv <detection_result.csv>` | risk score 막대그래프 생성 | `results/graphs/risk_scores.png` 저장 |
 | `run.py sample` | 정상/공격 유사 샘플 pcap 생성 | 실습용, 실제 dnscat2 트래픽 아님 |
 | `run.py live` | 실시간 SOAR 엔진 실행 | `scripts/run_live_engine.sh` 와 동일 |
 
-> `detect --live`의 "live"는 [Live SOAR Engine](#12-live-soar-engine)의 실시간 캡처와는 무관하며,
+> `detect --live`의 "live"는 [Live SOAR Engine](#13-live-soar-engine)의 실시간 캡처와는 무관하며,
 > **오프라인 분석 결과를 실제로 차단할지(dry-run 해제)** 를 의미합니다. 혼동하지 않도록 주의하세요.
 
 ## 6. Offline vs Live
@@ -158,6 +164,8 @@ sudo bash scripts/run_live_engine.sh   # 실시간 SOAR 엔진 실행
 |---|---|---|
 | **Offline 분석** | 저장된 pcap을 재현 가능하게 분석·시각화 | `run.py analyze / detect / compare / plot` |
 | **Live 분석** | 실시간 DNS 스트림 감시 + SIEM NDJSON/차단 연동 | `scripts/run_live_engine.sh` 또는 `run.py live` |
+
+두 경로 모두 같은 [Playbook](#11-playbook-대응-정책)을 읽어 severity별 대응 액션을 결정합니다.
 
 ## 7. 설정 (`config/settings.yaml`)
 
@@ -168,9 +176,9 @@ sudo bash scripts/run_live_engine.sh   # 실시간 SOAR 엔진 실행
 |---|---|
 | `thresholds` | 각 탐지 지표(entropy, qname 길이, qps 등)의 임계값 |
 | `risk_scores` | 임계값 초과 시 부여되는 점수 (도메인/IP 블랙리스트 히트 포함) |
-| `risk_levels` | 총점 기준 verdict 등급 경계 (NORMAL/SUSPICIOUS/MALICIOUS/CRITICAL) |
+| `risk_levels` | 총점 기준 severity 등급 경계 (NORMAL/SUSPICIOUS/MALICIOUS/CRITICAL) — offline/live 공용 |
 | `blacklist` | 의심 도메인, IP/도메인/화이트리스트 파일 경로 |
-| `response` | 차단 모드(`kali_input` / `ubuntu_output` / `gateway_forward`), TTL |
+| `response` | 차단 모드(`kali_input` / `ubuntu_output` / `gateway_forward`), TTL, **`playbook_path`**(playbook YAML 경로) |
 | `live` | 실시간 엔진의 인터페이스, BPF 필터, NDJSON/상태 DB 경로 |
 
 ## 8. Offline 분석 흐름
@@ -182,8 +190,8 @@ pcap
 → scripts/dns_analyzer.py
 → DNSPacketRecord 추출
 → HostStats 집계
-→ scripts/risk_engine.py
-→ detection_result.csv/json, alert.log
+→ scripts/risk_engine.py (severity 산출 → playbook 매칭)
+→ detection_result.csv/json, alert.log, notifications.log
 ```
 
 ### 8.1 DNS Analyzer feature
@@ -244,7 +252,7 @@ Live SOAR Engine은 실시간 query의 entropy가 `max_entropy` 임계값을 초
 
 ## 10. Risk Engine
 
-`scripts/risk_engine.py`는 analyzer 결과와 Snort alert, 도메인 blacklist hit, **IP blacklist hit**(`rules/ip_blacklist.txt`)를 결합해 최종 위험도를 계산합니다.
+`scripts/risk_engine.py`는 analyzer 결과와 Snort alert, 도메인 blacklist hit, **IP blacklist hit**(`rules/ip_blacklist.txt`)를 결합해 최종 위험도(`risk_score`)를 계산하고, `risk_levels` 임계값으로 4단계 severity(NORMAL/SUSPICIOUS/MALICIOUS/CRITICAL)를 매깁니다.
 
 주요 점수 항목은 다음과 같습니다.
 
@@ -262,17 +270,82 @@ Live SOAR Engine은 실시간 query의 entropy가 `max_entropy` 임계값을 초
 - 도메인 blacklist hit
 - IP blacklist hit
 
+산출된 severity를 실제로 어떤 액션(차단/알림/로그만)으로 이어갈지는 코드가 아니라
+[Playbook](#11-playbook-대응-정책)이 결정합니다.
+
 결과는 다음 파일로 저장됩니다.
 
 ```text
 results/detection_result.csv
 results/detection_result.json
 results/alert.log
+results/notifications.log   # playbook의 notify 액션이 매칭됐을 때
 ```
 
-도메인/IP blacklist hit는 단독으로 높은 점수를 부여받을 수 있으므로, 정책 파일(`rules/domain_blacklist.txt`, `rules/ip_blacklist.txt`)에 등록된 값과 매칭되면 HIGH/CRITICAL 판단에 큰 영향을 줍니다.
+도메인/IP blacklist hit는 단독으로 높은 점수를 부여받을 수 있으므로, 정책 파일(`rules/domain_blacklist.txt`, `rules/ip_blacklist.txt`)에 등록된 값과 매칭되면 severity가 크게 올라갑니다.
 
-## 11. Snort Rule Detection
+## 11. Playbook (대응 정책)
+
+"CRITICAL이면 차단"처럼 조건→액션을 코드에 하드코딩하지 않고, **`playbooks/dns_tunneling_response.yaml`**
+한 파일에 정의합니다. offline(`scripts/risk_engine.py`)과 live(`engine/live_soar_engine.py`)가 같은
+파일을 공유하며, 로딩·매칭 로직은 `scripts/playbook.py` 하나에만 구현되어 있습니다.
+
+### 11.1 구조
+
+```yaml
+rules:
+  - when: { min_severity: MALICIOUS }
+    actions:
+      - type: block_ip
+      - type: notify
+        channel: log
+  - when: { min_severity: SUSPICIOUS }
+    actions:
+      - type: log_only
+```
+
+- 규칙은 파일에 적힌 순서대로 검사하고, 현재 이벤트의 severity가 규칙의 `min_severity` **이상**이면
+  그 규칙의 액션만 실행한 뒤 아래 규칙은 보지 않습니다. 등급이 높은(엄격한) 규칙을 먼저 적어야 합니다.
+- severity 등급: `NORMAL < SUSPICIOUS < MALICIOUS < CRITICAL` (`config/settings.yaml`의 `risk_levels`
+  임계값으로 `risk_score`를 변환 — offline/live 공용 `severity_from_score()`)
+- 조건 평가는 severity 등급 비교만 지원합니다. `eval` 등 임의 코드 실행 방식의 조건식은 쓰지 않습니다
+  (AGENTS.md의 live 엔진 안전 제약과 일치시키기 위함).
+
+### 11.2 지원 액션 타입
+
+| 타입 | 파라미터 | 동작 |
+|---|---|---|
+| `block_ip` | `mode`(옵션, 생략 시 `response.block_mode`), `ttl_seconds`(옵션, 생략 시 `response.block_ttl_seconds`) | live: 즉시 iptables 차단 + TTL 후 자동 해제 · offline: `--block`(dry-run) / `--block --live`(실제 실행)일 때만 |
+| `notify` | `channel`(현재 `"log"`만 지원) | `results/notifications.log`에 append (다른 채널 값은 조용히 무시 — 향후 slack/webhook 확장 지점) |
+| `log_only` | 없음 | 별도 동작 없음. CSV/JSON/NDJSON에는 어차피 기록되므로 "검토는 했다"는 표시용 |
+
+새 액션 타입을 추가하려면 `engine/live_soar_engine.py`의 `ActionWorker`와 `scripts/risk_engine.py`의
+`main()`에 핸들러를 하나씩 추가하고(닫힌 레지스트리 방식), playbook YAML에서 `type`으로 참조하면 됩니다.
+
+### 11.3 기본값과 동작 보증
+
+기본 `playbooks/dns_tunneling_response.yaml`은 이 기능을 도입하기 전의 하드코딩 로직
+(`risk_score`가 `suspicious_max`를 넘는 MALICIOUS/CRITICAL에서 차단)과 동일하게 동작하도록
+맞춰져 있습니다. 즉 **코드 배포 직후 기본 동작은 바뀌지 않고**, 대응 정책을 바꾸고 싶을 때 이
+YAML 파일만 수정하면 됩니다(코드 변경·재배포 불필요).
+
+### 11.4 다른 Playbook으로 테스트
+
+`scripts/risk_engine.py`는 `--playbook <경로>`로 실행 시점에 다른 YAML을 지정할 수 있습니다
+(`config/settings.yaml`의 `response.playbook_path`는 그대로 둔 채 일회성으로 테스트할 때 사용).
+
+```bash
+python scripts/risk_engine.py pcaps/dnscat2_connect.pcap --block \
+  --playbook playbooks/tiered_response_example.yaml
+```
+
+`playbooks/tiered_response_example.yaml`은 등급별로 다른 대응을 하는 예시입니다 —
+CRITICAL은 커스텀 TTL/모드로 즉시 차단, MALICIOUS는 차단 없이 알림만, SUSPICIOUS는
+(아직 미지원인) `slack` 채널로 알림을 시도해 조용히 무시되는 것까지 보여줍니다. live
+엔진에서 다른 playbook을 쓰려면 `config/settings.yaml`의 `response.playbook_path`를
+바꾸면 됩니다(현재 live 엔진에는 실행 시점 오버라이드 플래그는 없습니다).
+
+## 12. Snort Rule Detection
 
 Snort 룰은 `rules/dns_tunnel.rules`에 있습니다.
 
@@ -295,9 +368,10 @@ sudo bash scripts/run_snort.sh pcaps/dnscat2_connect.pcap /etc/snort/snort.conf
 
 `run_snort.sh`는 pcap 경로와 Snort 설정 파일 경로를 인자로 받으며, 결과는 `results/`에 저장됩니다.
 
-## 12. Live SOAR Engine
+## 13. Live SOAR Engine
 
-Live engine은 실시간 DNS query를 감시하고, 위험도가 CRITICAL이면 `block_ip.sh`와 연동해 차단합니다.
+Live engine은 실시간 DNS query를 감시하고, 위험도(severity)에 대해 [Playbook](#11-playbook-대응-정책)이
+매칭한 액션(`block_ip`/`notify`)을 `ActionWorker`가 실행합니다.
 
 ```bash
 sudo bash scripts/run_live_engine.sh
@@ -311,7 +385,7 @@ sudo .venv/bin/python engine/live_soar_engine.py
 
 `run_live_engine.sh`는 현재 `python3 engine/live_soar_engine.py`를 호출합니다. 따라서 VM에서 `.venv`에만 scapy/pyyaml이 설치되어 있다면 위의 `.venv/bin/python` 방식이 더 안전합니다.
 
-### 12.1 Live engine 설정
+### 13.1 Live engine 설정
 
 `config/settings.yaml`의 live 설정을 사용합니다.
 
@@ -336,7 +410,7 @@ print(get_if_list())
 PY
 ```
 
-### 12.2 Live engine 출력
+### 13.2 Live engine 출력
 
 Live engine은 다음 파일을 생성합니다.
 
@@ -345,33 +419,37 @@ results/siem_dns_detect.json
 results/live_soar_state.db
 results/live_soar_state.db-wal
 results/live_soar_state.db-shm
+results/notifications.log
 results/block_rules.log
 ```
 
-`results/siem_dns_detect.json`은 NDJSON 형식입니다. 한 줄이 하나의 탐지 이벤트입니다.
+`results/siem_dns_detect.json`은 NDJSON 형식입니다. 한 줄이 하나의 탐지 이벤트이며, playbook이
+매칭한 액션 목록(`actions`)도 함께 기록됩니다.
 
-### 12.3 Live engine 주요 로직
+### 13.3 Live engine 주요 로직
 
 - Scapy `sniff()`로 UDP/53 DNS query 수집
 - `process_packet()`에서는 qname/src_ip/dst_ip/qtype 등 최소 정보만 추출 (DB 접근·정규식·subprocess 호출 없음)
-- queue 기반 비동기 분석
-- entropy, 10초 window query count, interval stddev, blacklist hit 기반 risk score 계산
-- CRITICAL 이벤트는 block worker로 전달
+- queue 기반 비동기 분석 → entropy, 10초 window query count, interval stddev, blacklist hit 기반 `risk_score` 계산
+- `risk_levels` 임계값으로 severity(NORMAL/SUSPICIOUS/MALICIOUS/CRITICAL) 산출 (offline과 동일 기준)
+- playbook이 매칭한 액션이 있으면 이벤트를 `ActionWorker`로 전달
+- `ActionWorker`가 `block_ip`(iptables 차단 + 상태 DB 갱신) / `notify`(`notifications.log` 기록) 실행 —
+  같은 src_ip에 대한 실행은 5초 쿨다운으로 묶임
 - SQLite WAL 상태 DB에 차단 상태 저장
 - TTL 만료 시 `unblock_ip.sh` 호출
 
-### 12.4 상태 저장 방식
+### 13.4 상태 저장 방식
 
 차단 상태와 TTL 만료 시각은 SQLite(`results/live_soar_state.db`)에 **벽시계(epoch, `time.time()`) 기준**으로
 저장됩니다. `time.monotonic()`은 프로세스/부팅마다 기준점이 달라지므로, 엔진이 재시작되어도 유효해야 하는
 영속 데이터에는 사용하지 않습니다. 구버전 스키마(`unblock_at_mono`)로 만들어진 DB는 기동 시 자동으로
 감지되어 정리(재생성)됩니다.
 
-## 13. Blacklist / Whitelist 정책
+## 14. Blacklist / Whitelist 정책
 
 정책 파일은 `rules/` 아래에 있습니다.
 
-### 13.1 IP blacklist
+### 14.1 IP blacklist
 
 `rules/ip_blacklist.txt`
 
@@ -383,7 +461,7 @@ results/block_rules.log
 
 Live engine과 Risk Engine(offline) 모두 line 단위 문자열 set으로 IP blacklist를 읽습니다. IP를 한 줄에 하나씩 적어야 합니다.
 
-### 13.2 Domain blacklist
+### 14.2 Domain blacklist
 
 `rules/domain_blacklist.txt`
 
@@ -396,7 +474,7 @@ malicious.local
 
 Risk Engine과 Live Engine은 domain blacklist를 읽어 base domain과 비교합니다.
 
-### 13.3 Domain whitelist
+### 14.3 Domain whitelist
 
 `rules/domain_whitelist.txt`
 
@@ -407,11 +485,11 @@ github.com
 microsoft.com
 ```
 
-whitelist domain은 live engine에서 INFO 이벤트로 처리되어 일반 위험 점수 계산에서 제외됩니다.
+whitelist domain은 live engine에서 severity `NORMAL`(액션 없음)로 처리되어 일반 위험 점수 계산에서 제외됩니다.
 
-## 14. Defense Scripts
+## 15. Defense Scripts
 
-### 14.1 IP block
+### 15.1 IP block
 
 ```bash
 sudo bash scripts/block_ip.sh <src_ip> <mode>
@@ -433,7 +511,7 @@ sudo bash scripts/block_ip.sh 172.30.1.44 kali_input
 
 `block_ip.sh`는 IPv4 형식을 검사하고, `iptables -C`로 중복 rule을 확인한 뒤 없을 때만 `iptables -A`로 추가합니다.
 
-### 14.2 IP unblock
+### 15.2 IP unblock
 
 ```bash
 sudo bash scripts/unblock_ip.sh <src_ip> <mode>
@@ -445,7 +523,7 @@ sudo bash scripts/unblock_ip.sh <src_ip> <mode>
 sudo bash scripts/unblock_ip.sh 172.30.1.44 kali_input
 ```
 
-### 14.3 Domain sinkhole
+### 15.3 Domain sinkhole
 
 ```bash
 sudo bash scripts/block_domain.sh attacker.lab
@@ -462,7 +540,7 @@ sudo bash scripts/block_domain.sh --apply
 sudo systemctl restart dnsmasq
 ```
 
-## 15. dnsmasq sinkhole
+## 16. dnsmasq sinkhole
 
 기본 템플릿은 `rules/dnsmasq_sinkhole.conf`입니다.
 
@@ -493,7 +571,7 @@ address=/tunnel.lab/0.0.0.0
 address=/dnscat.lab/0.0.0.0
 ```
 
-## 16. pcap 수집
+## 17. pcap 수집
 
 DNS 트래픽 수집은 `scripts/capture_dns.sh`를 사용합니다.
 
@@ -510,7 +588,7 @@ sudo bash scripts/capture_dns.sh enp0s8 attack_dns
 
 생성 파일은 `pcaps/<name>_<timestamp>.pcap` 형식으로 저장됩니다.
 
-## 17. 그래프 생성
+## 18. 그래프 생성
 
 pcap 비교 그래프:
 
@@ -528,7 +606,7 @@ python scripts/plot_results.py --csv results/detection_result.csv
 
 그래프는 `results/graphs/`에 저장됩니다.
 
-## 18. 결과 파일 정리
+## 19. 결과 파일 정리
 
 입력 pcap은 실험 재현성을 위해 남겨도 됩니다.
 
@@ -551,12 +629,12 @@ rm -f results/graphs/*.png
 
 GitHub에는 실제 실험 pcap, 운영 로그, DB 파일을 올리지 않는 것을 권장합니다(`.gitignore`에 이미 반영되어 있습니다).
 
-## 19. 검증 명령
+## 20. 검증 명령
 
 문법 검사:
 
 ```bash
-python -m py_compile run.py scripts/dns_analyzer.py scripts/risk_engine.py engine/live_soar_engine.py
+python -m py_compile run.py scripts/dns_analyzer.py scripts/risk_engine.py scripts/playbook.py engine/live_soar_engine.py
 bash -n scripts/block_ip.sh
 bash -n scripts/unblock_ip.sh
 bash -n scripts/block_domain.sh
@@ -576,7 +654,7 @@ PY
 
 인터페이스명은 환경에 맞게 변경합니다.
 
-## 20. 안전 / 운영 원칙
+## 21. 안전 / 운영 원칙
 
 - 본 저장소는 **방어(탐지/대응) 목적** 전용입니다.
 - dnscat2 실행 자동화, exploit, 외부 C2 접속 코드는 포함하지 않습니다.
@@ -585,6 +663,7 @@ PY
 - `iptables -F`는 기존 방화벽 규칙을 모두 지울 수 있으므로 실습 VM에서만 신중하게 사용합니다.
 - `ubuntu_output` 모드는 DNS 통신 전체에 영향을 줄 수 있으므로 테스트 전에 rule 내용을 확인합니다.
 - `engine/live_soar_engine.py`의 패킷 처리 경로(`process_packet`)는 DB 접근·정규식·subprocess 호출을 하지 않도록 제한되어 있습니다. 자세한 제약은 [`AGENTS.md`](AGENTS.md)를 참고하세요.
+- Playbook의 조건 평가는 severity 등급 비교만 지원하며 `eval` 등 임의 코드 실행 방식은 쓰지 않습니다.
 - Live engine은 query 중심 분석이므로 NXDOMAIN은 offline pcap 분석에서 확인하는 것이 더 정확합니다.
 - Snort 룰은 1차 탐지용이고, 정밀 판단은 Scapy/Risk Engine에서 수행합니다.
 - `iface: any`가 Scapy에서 동작하지 않으면 실제 인터페이스명으로 변경해야 합니다.

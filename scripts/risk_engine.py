@@ -19,6 +19,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from dns_analyzer import DNSAnalyzer, HostStats  # noqa: E402
+from playbook import PlaybookRule, load_playbook, match_actions, severity_from_score, write_notification  # noqa: E402
 
 
 class Verdict(Enum):
@@ -120,10 +121,12 @@ class RiskEngine:
         cfg = config or load_config()
         self.thresholds = cfg.get("thresholds", {})
         self.scores = cfg.get("risk_scores", {})
-        levels = cfg.get("risk_levels", {})
-        self.normal_max = levels.get("normal_max", 3)
-        self.suspicious_max = levels.get("suspicious_max", 6)
-        self.high_max = levels.get("high_max", 11)
+        self.risk_levels = cfg.get("risk_levels", {})
+        resp_cfg = cfg.get("response", {})
+        self.block_mode = str(resp_cfg.get("block_mode", "kali_input"))
+        self.block_ttl_seconds = float(resp_cfg.get("block_ttl_seconds", 60))
+        playbook_path = ROOT / resp_cfg.get("playbook_path", "playbooks/dns_tunneling_response.yaml")
+        self.playbook_rules: list[PlaybookRule] = load_playbook(playbook_path)
         snort_cfg = cfg.get("snort", {})
         self.snort_log = ROOT / snort_cfg.get("alert_log", "results/snort_alerts.log")
         bl = cfg.get("blacklist", {})
@@ -189,12 +192,8 @@ class RiskEngine:
 
         total = sum(breakdown.values())
         verdict = self._verdict(total)
-        action = {
-            Verdict.NORMAL: "monitor",
-            Verdict.SUSPICIOUS: "alert_and_log",
-            Verdict.MALICIOUS: "block_recommended",
-            Verdict.CRITICAL: "block_immediate",
-        }[verdict]
+        matched = match_actions(verdict.name, self.playbook_rules)
+        action = "+".join(a["type"] for a in matched) if matched else "monitor"
 
         return RiskAssessment(
             src_ip=stats.src_ip,
@@ -219,13 +218,9 @@ class RiskEngine:
         )
 
     def _verdict(self, score: int) -> Verdict:
-        if score <= self.normal_max:
-            return Verdict.NORMAL
-        if score <= self.suspicious_max:
-            return Verdict.SUSPICIOUS
-        if score <= self.high_max:
-            return Verdict.MALICIOUS
-        return Verdict.CRITICAL
+        # live 엔진(AnalysisWorker)과 동일한 severity_from_score()로 등급을
+        # 매겨서 offline/live 판정 기준이 벌어지지 않도록 한다.
+        return Verdict[severity_from_score(score, self.risk_levels)]
 
     def _blacklist_hits_by_src(self, analyzer: DNSAnalyzer) -> dict[str, int]:
         hits: dict[str, int] = {}
@@ -312,7 +307,7 @@ class RiskEngine:
 
         with open(alert_path, "a", encoding="utf-8") as f:
             for a in assessments:
-                if a.verdict in {Verdict.MALICIOUS, Verdict.CRITICAL}:
+                if match_actions(a.verdict.name, self.playbook_rules):
                     f.write(
                         f"{now} [{a.verdict.level}] {a.src_ip} score={a.risk_score} "
                         f"verdict={a.verdict.code} action={a.recommended_action} breakdown={json.dumps(a.breakdown, ensure_ascii=False)}\n"
@@ -350,9 +345,10 @@ def block_ip(src_ip: str, mode: str = "kali_input", dry_run: bool = True) -> Non
 def main():
     parser = argparse.ArgumentParser(description="DNS 터널링 위험도 판단 엔진")
     parser.add_argument("pcap", help="pcap file path")
-    parser.add_argument("--block", action="store_true", help="HIGH/CRITICAL verdict 시 iptables 차단")
+    parser.add_argument("--block", action="store_true", help="playbook 액션(block_ip/notify)이 매칭되면 실행 (block_ip는 --live 없으면 dry-run)")
     parser.add_argument("--live", action="store_true", help="실제 차단 실행 (sudo 필요)")
     parser.add_argument("--snort-log", default=None, help="Snort alert log path")
+    parser.add_argument("--playbook", default=None, help="playbook YAML 경로 (기본: config/settings.yaml의 response.playbook_path)")
     args = parser.parse_args()
 
     pcap = Path(args.pcap)
@@ -362,6 +358,8 @@ def main():
     engine = RiskEngine()
     if args.snort_log:
         engine.snort_log = Path(args.snort_log)
+    if args.playbook:
+        engine.playbook_rules = load_playbook(Path(args.playbook))
 
     assessments = engine.analyze_pcap(pcap)
     engine.print_report(assessments)
@@ -369,14 +367,24 @@ def main():
     print(f"\n[+] detection_result.csv : {csv_p}")
     print(f"[+] alert.log            : {alert_p}")
 
-    cfg = load_config()
-    block_mode = cfg.get("response", {}).get("block_mode", "kali_input")
-
     for a in assessments:
-        if a.verdict in {Verdict.MALICIOUS, Verdict.CRITICAL}:
-            print(f"\n[!] {a.src_ip} → 차단 권고 (score={a.risk_score}, level={a.verdict.level})")
-            if args.block:
-                block_ip(a.src_ip, block_mode, dry_run=not args.live)
+        matched = match_actions(a.verdict.name, engine.playbook_rules)
+        action_types = {act.get("type") for act in matched}
+        if not action_types:
+            continue
+        print(f"\n[!] {a.src_ip} → playbook actions={sorted(action_types)} (score={a.risk_score}, level={a.verdict.level})")
+        if not args.block:
+            continue  # offline 기본값은 advisory/dry-run: 액션은 --block을 줘야 실행됨
+        if "block_ip" in action_types:
+            block_action = next(act for act in matched if act.get("type") == "block_ip")
+            mode = str(block_action.get("mode", engine.block_mode))
+            block_ip(a.src_ip, mode, dry_run=not args.live)
+        if "notify" in action_types:
+            notify_action = next(act for act in matched if act.get("type") == "notify")
+            write_notification(
+                ROOT / "results" / "notifications.log", a.verdict.name, a.src_ip, "offline",
+                channel=str(notify_action.get("channel", "log")),
+            )
 
 
 if __name__ == "__main__":

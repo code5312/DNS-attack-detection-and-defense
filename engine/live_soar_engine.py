@@ -8,6 +8,7 @@ import signal
 import sqlite3
 import statistics
 import subprocess
+import sys
 import threading
 import time
 from collections import Counter, defaultdict, deque
@@ -21,6 +22,9 @@ from scapy.all import DNS, IP, UDP, sniff  # type: ignore
 ROOT = Path(__file__).resolve().parent.parent
 CFG_PATH = ROOT / "config" / "settings.yaml"
 
+sys.path.insert(0, str(ROOT / "scripts"))
+from playbook import has_effective_action, load_playbook, match_actions, severity_from_score, write_notification  # noqa: E402
+
 
 def load_cfg() -> dict:
     if CFG_PATH.exists():
@@ -33,15 +37,19 @@ LIVE = CFG.get("live", {})
 BL = CFG.get("blacklist", {})
 RESP = CFG.get("response", {})
 TH = CFG.get("thresholds", {})
+RISK_LEVELS = CFG.get("risk_levels", {})
 
 RESULTS_DIR = ROOT / "results"
 NDJSON_PATH = ROOT / LIVE.get("ndjson_output", "results/siem_dns_detect.json")
 DB_PATH = ROOT / LIVE.get("state_db", "results/live_soar_state.db")
+NOTIFY_LOG_PATH = RESULTS_DIR / "notifications.log"
 BLOCK_SCRIPT = ROOT / "scripts" / "block_ip.sh"
 UNBLOCK_SCRIPT = ROOT / "scripts" / "unblock_ip.sh"
 IP_BLACKLIST_FILE = ROOT / BL.get("ip_file", "rules/ip_blacklist.txt")
 DOMAIN_BLACKLIST_FILE = ROOT / BL.get("domain_file", "rules/domain_blacklist.txt")
 DOMAIN_WHITELIST_FILE = ROOT / BL.get("whitelist_file", "rules/domain_whitelist.txt")
+PLAYBOOK_PATH = ROOT / RESP.get("playbook_path", "playbooks/dns_tunneling_response.yaml")
+PLAYBOOK_RULES = load_playbook(PLAYBOOK_PATH)
 
 
 def load_line_set(path: Path) -> set[str]:
@@ -62,7 +70,7 @@ IP_BLACKLIST = load_line_set(IP_BLACKLIST_FILE)
 stop_event = threading.Event()
 packet_queue: queue.Queue[dict[str, Any]] = queue.Queue(maxsize=1000)
 analysis_queue: queue.Queue[dict[str, Any]] = queue.Queue(maxsize=1000)
-webhook_queue: queue.Queue[dict[str, Any]] = queue.Queue(maxsize=1000)
+action_queue: queue.Queue[dict[str, Any]] = queue.Queue(maxsize=1000)
 
 
 def monotonic_now() -> float:
@@ -193,7 +201,7 @@ class AnalysisWorker(threading.Thread):
             reasons: list[str] = []
             whitelisted = base in WHITELIST
             if whitelisted:
-                out = {"ts_epoch": time.time(), "mono_ts": now_m, "src_ip": src_ip, "dst_ip": ev["dst_ip"], "qname": qname, "base_domain": base, "risk_score": 0, "severity": "INFO", "reasons": ["whitelist"]}
+                out = {"ts_epoch": time.time(), "mono_ts": now_m, "src_ip": src_ip, "dst_ip": ev["dst_ip"], "qname": qname, "base_domain": base, "risk_score": 0, "severity": "NORMAL", "reasons": ["whitelist"], "actions": []}
                 queue_put_oldest_drop(analysis_queue, out)
                 continue
 
@@ -220,11 +228,16 @@ class AnalysisWorker(threading.Thread):
                 risk += 7
                 reasons.append("ip_blacklist")
 
-            severity = "CRITICAL" if risk >= 7 else "INFO"
-            out = {"ts_epoch": time.time(), "mono_ts": now_m, "src_ip": src_ip, "dst_ip": ev["dst_ip"], "qname": qname, "base_domain": base, "risk_score": risk, "severity": severity, "reasons": reasons}
+            severity = severity_from_score(risk, RISK_LEVELS)
+            matched_actions = match_actions(severity, PLAYBOOK_RULES)
+            out = {
+                "ts_epoch": time.time(), "mono_ts": now_m, "src_ip": src_ip, "dst_ip": ev["dst_ip"],
+                "qname": qname, "base_domain": base, "risk_score": risk, "severity": severity,
+                "reasons": reasons, "actions": matched_actions,
+            }
             queue_put_oldest_drop(analysis_queue, out)
-            if severity == "CRITICAL":
-                queue_put_oldest_drop(webhook_queue, out)
+            if has_effective_action(matched_actions):
+                queue_put_oldest_drop(action_queue, out)
 
             # idle eviction
             for ip, t in list(self.last_seen.items()):
@@ -233,7 +246,15 @@ class AnalysisWorker(threading.Thread):
                     self.last_seen.pop(ip, None)
 
 
-class WebhookWorker(threading.Thread):
+class ActionWorker(threading.Thread):
+    """Playbook이 매칭한 액션(block_ip/notify/...)을 실제로 실행하는 워커.
+
+    한 src_ip에 대한 실행은 5초 쿨다운(last_fork_mono)으로 묶여 있다 — block_ip뿐
+    아니라 notify도 매 패킷마다 쏟아지지 않도록 액션 종류와 무관하게 공통 적용한다.
+    다만 "이미 차단됨(st.blocked)"은 block_ip 재실행만 막을 뿐 notify까지 막지는
+    않는다 — 차단 중에도 계속 시도하는 공격에 대한 알림은 계속 남아야 한다.
+    """
+
     def __init__(self, store: StateStore):
         super().__init__(daemon=True)
         self.store = store
@@ -242,44 +263,62 @@ class WebhookWorker(threading.Thread):
         self.block_ttl_sec = float(RESP.get("block_ttl_seconds", 60))
         self.block_mode = str(RESP.get("block_mode", "kali_input"))
 
+    def _run_block_ip(self, src_ip: str, params: dict, st: BlockState) -> None:
+        mode = str(params.get("mode", self.block_mode))
+        ttl = float(params.get("ttl_seconds", self.block_ttl_sec))
+        try:
+            subprocess.run(["bash", str(BLOCK_SCRIPT), src_ip, mode], check=False)
+        except Exception:
+            pass
+        st.blocked = True
+        st.unblock_at_epoch = time.time() + ttl
+        self.store.upsert_block(src_ip, True, st.unblock_at_epoch)
+
     def run(self) -> None:
         while not stop_event.is_set():
             try:
-                alert = webhook_queue.get(timeout=0.5)
+                alert = action_queue.get(timeout=0.5)
             except queue.Empty:
                 continue
             src_ip = str(alert.get("src_ip", ""))
+            severity = str(alert.get("severity", ""))
+            qname = str(alert.get("qname", ""))
+            actions = alert.get("actions") or []
             now_m = monotonic_now()
             with self.lock:
                 st = self.block_state[src_ip]
-                if st.blocked or now_m - st.last_fork_mono < 5.0:
+                if now_m - st.last_fork_mono < 5.0:
                     continue
-                try:
-                    subprocess.run(["bash", str(BLOCK_SCRIPT), src_ip, self.block_mode], check=False)
-                except Exception:
-                    pass
-                st.blocked = True
                 st.last_fork_mono = now_m
-                st.unblock_at_epoch = time.time() + self.block_ttl_sec
-                self.store.upsert_block(src_ip, True, st.unblock_at_epoch)
+                for action in actions:
+                    a_type = action.get("type")
+                    if a_type == "block_ip":
+                        if not st.blocked:
+                            self._run_block_ip(src_ip, action, st)
+                    elif a_type == "notify":
+                        write_notification(
+                            NOTIFY_LOG_PATH, severity, src_ip, "live",
+                            qname=qname, channel=str(action.get("channel", "log")),
+                        )
+                    # log_only 및 알 수 없는 타입: 추가 동작 없음
 
 
 class TTLScheduler(threading.Thread):
-    def __init__(self, store: StateStore, webhook: WebhookWorker):
+    def __init__(self, store: StateStore, action_worker: ActionWorker):
         super().__init__(daemon=True)
         self.store = store
-        self.webhook = webhook
+        self.action_worker = action_worker
 
     def run(self) -> None:
         while not stop_event.is_set():
             now_m = monotonic_now()
             for src_ip in self.store.get_due_unblocks(time.time()):
-                with self.webhook.lock:
-                    st = self.webhook.block_state[src_ip]
+                with self.action_worker.lock:
+                    st = self.action_worker.block_state[src_ip]
                     if now_m - st.last_fork_mono < 5.0:
                         continue
                     try:
-                        subprocess.run(["bash", str(UNBLOCK_SCRIPT), src_ip, self.webhook.block_mode], check=False)
+                        subprocess.run(["bash", str(UNBLOCK_SCRIPT), src_ip, self.action_worker.block_mode], check=False)
                     except Exception:
                         pass
                     st.blocked = False
@@ -320,17 +359,17 @@ def main() -> None:
     _install_signal_handlers()
     store = StateStore(DB_PATH)
     aw = AnalysisWorker()
-    ww = WebhookWorker(store)
-    ts = TTLScheduler(store, ww)
+    ac = ActionWorker(store)
+    ts = TTLScheduler(store, ac)
     nw = NDJSONWriter()
-    aw.start(); ww.start(); ts.start(); nw.start()
+    aw.start(); ac.start(); ts.start(); nw.start()
     try:
         sniff(iface=str(LIVE.get("iface", "any")), filter=str(LIVE.get("bpf_filter", "udp port 53")), prn=process_packet, stop_filter=lambda _: stop_event.is_set(), store=0)
     except Exception:
         stop_event.set()
     finally:
         stop_event.set()
-        for t in (aw, ww, ts, nw):
+        for t in (aw, ac, ts, nw):
             t.join(timeout=2.0)
 
 

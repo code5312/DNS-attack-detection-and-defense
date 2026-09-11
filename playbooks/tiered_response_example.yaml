@@ -1,0 +1,32 @@
+# 예시 Playbook: 등급별로 서로 다른 대응을 하는 tiered 버전
+#
+# 기본 playbook(dns_tunneling_response.yaml)은 MALICIOUS/CRITICAL을 동일하게
+# 취급하지만, 이 예시는 다음처럼 등급을 세분화한다.
+#
+#   CRITICAL   - 즉시 차단(기본보다 긴 TTL·다른 모드로 오버라이드) + 알림
+#   MALICIOUS  - 차단은 하지 않고 알림만 (오탐 여지가 있으니 사람이 보고 판단)
+#   SUSPICIOUS - 알림 시도하되 채널이 아직 미지원("slack")이라 조용히 무시됨,
+#                기록은 log_only로만 남음
+#
+# scripts/risk_engine.py --playbook 또는 config/settings.yaml의
+# response.playbook_path 를 이 파일로 바꾸면 코드 수정 없이 적용된다.
+
+rules:
+  - when: { min_severity: CRITICAL }
+    actions:
+      - type: block_ip
+        mode: gateway_forward
+        ttl_seconds: 300
+      - type: notify
+        channel: log
+
+  - when: { min_severity: MALICIOUS }
+    actions:
+      - type: notify
+        channel: log
+
+  - when: { min_severity: SUSPICIOUS }
+    actions:
+      - type: notify
+        channel: slack   # MVP 미지원 채널 -> 무시됨 (동작 확인용)
+      - type: log_only

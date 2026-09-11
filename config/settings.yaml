@@ -62,6 +62,7 @@ blacklist:
 response:
   block_mode: kali_input
   block_ttl_seconds: 60
+  playbook_path: playbooks/dns_tunneling_response.yaml
 
 live:
   enabled: true

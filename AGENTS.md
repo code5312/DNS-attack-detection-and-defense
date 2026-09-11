@@ -51,6 +51,20 @@ DNS Packet Capture
 - Combine offline analyzer results, Snort alerts, domain blacklist, IP blacklist.
 - Save results/detection_result.csv and results/detection_result.json.
 - Include risk score breakdown.
+- Response actions (block/notify) must come from the shared playbook (scripts/playbook.py +
+  playbooks/dns_tunneling_response.yaml), not from a hardcoded verdict-to-action mapping.
+
+## Playbook Rules
+
+- Files: scripts/playbook.py (loader/matcher), playbooks/*.yaml (condition → action rules).
+- Shared by both scripts/risk_engine.py (offline) and engine/live_soar_engine.py (live); do not
+  fork a second implementation of severity classification or rule matching.
+- Condition matching is limited to severity-level comparison (NORMAL/SUSPICIOUS/MALICIOUS/CRITICAL).
+- Do not use eval/exec or any dynamic-expression DSL for condition matching.
+- Action execution stays engine-specific: live executes immediately (with TTL), offline only
+  executes block_ip when `--block`/`--live` are passed (default is advisory/dry-run).
+- New action types must be added as a named handler (closed registry), never as an arbitrary
+  callable loaded from config.
 
 ## Defense Script Rules
 
