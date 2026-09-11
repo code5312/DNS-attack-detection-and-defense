@@ -42,6 +42,7 @@ risk_scores:
   snort_alert: 3
   attacker_domain: 2
   blacklist_hit: 7
+  ip_blacklist_hit: 7
   high_entropy: 2
 
 risk_levels:

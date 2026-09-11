@@ -117,7 +117,7 @@ def process_packet(pkt) -> None:
 @dataclass
 class BlockState:
     blocked: bool = False
-    unblock_at_mono: float = 0.0
+    unblock_at_epoch: float = 0.0
     last_fork_mono: float = 0.0
 
 
@@ -126,21 +126,33 @@ class StateStore:
         self.conn = sqlite3.connect(str(db_path), check_same_thread=False)
         self.conn.execute("PRAGMA journal_mode=WAL;")
         self.conn.execute("PRAGMA busy_timeout=3000;")
-        self.conn.execute("CREATE TABLE IF NOT EXISTS blocks(src_ip TEXT PRIMARY KEY, blocked INTEGER, unblock_at_mono REAL, updated_at_mono REAL)")
+        self.conn.execute("CREATE TABLE IF NOT EXISTS blocks(src_ip TEXT PRIMARY KEY, blocked INTEGER, unblock_at_epoch REAL, updated_at_epoch REAL)")
+        self._migrate_legacy_schema()
         self.conn.commit()
         self.lock = threading.Lock()
 
-    def upsert_block(self, src_ip: str, blocked: bool, unblock_at_mono: float) -> None:
+    def _migrate_legacy_schema(self) -> None:
+        # Older DBs stored a time.monotonic() value, which is meaningless
+        # after a process/host restart. Drop that stale state rather than
+        # let TTL comparisons silently never fire (or fire immediately).
+        cols = {row[1] for row in self.conn.execute("PRAGMA table_info(blocks)")}
+        if "unblock_at_mono" in cols and "unblock_at_epoch" not in cols:
+            self.conn.execute("DROP TABLE blocks")
+            self.conn.execute(
+                "CREATE TABLE blocks(src_ip TEXT PRIMARY KEY, blocked INTEGER, unblock_at_epoch REAL, updated_at_epoch REAL)"
+            )
+
+    def upsert_block(self, src_ip: str, blocked: bool, unblock_at_epoch: float) -> None:
         with self.lock:
             self.conn.execute(
-                "INSERT INTO blocks(src_ip,blocked,unblock_at_mono,updated_at_mono) VALUES(?,?,?,?) ON CONFLICT(src_ip) DO UPDATE SET blocked=excluded.blocked, unblock_at_mono=excluded.unblock_at_mono, updated_at_mono=excluded.updated_at_mono",
-                (src_ip, 1 if blocked else 0, unblock_at_mono, monotonic_now()),
+                "INSERT INTO blocks(src_ip,blocked,unblock_at_epoch,updated_at_epoch) VALUES(?,?,?,?) ON CONFLICT(src_ip) DO UPDATE SET blocked=excluded.blocked, unblock_at_epoch=excluded.unblock_at_epoch, updated_at_epoch=excluded.updated_at_epoch",
+                (src_ip, 1 if blocked else 0, unblock_at_epoch, time.time()),
             )
             self.conn.commit()
 
-    def get_due_unblocks(self, now_mono: float) -> list[str]:
+    def get_due_unblocks(self, now_epoch: float) -> list[str]:
         with self.lock:
-            rows = self.conn.execute("SELECT src_ip FROM blocks WHERE blocked=1 AND unblock_at_mono>0 AND unblock_at_mono<=?", (now_mono,)).fetchall()
+            rows = self.conn.execute("SELECT src_ip FROM blocks WHERE blocked=1 AND unblock_at_epoch>0 AND unblock_at_epoch<=?", (now_epoch,)).fetchall()
             return [r[0] for r in rows]
 
 
@@ -248,8 +260,8 @@ class WebhookWorker(threading.Thread):
                     pass
                 st.blocked = True
                 st.last_fork_mono = now_m
-                st.unblock_at_mono = now_m + self.block_ttl_sec
-                self.store.upsert_block(src_ip, True, st.unblock_at_mono)
+                st.unblock_at_epoch = time.time() + self.block_ttl_sec
+                self.store.upsert_block(src_ip, True, st.unblock_at_epoch)
 
 
 class TTLScheduler(threading.Thread):
@@ -261,7 +273,7 @@ class TTLScheduler(threading.Thread):
     def run(self) -> None:
         while not stop_event.is_set():
             now_m = monotonic_now()
-            for src_ip in self.store.get_due_unblocks(now_m):
+            for src_ip in self.store.get_due_unblocks(time.time()):
                 with self.webhook.lock:
                     st = self.webhook.block_state[src_ip]
                     if now_m - st.last_fork_mono < 5.0:
@@ -271,7 +283,7 @@ class TTLScheduler(threading.Thread):
                     except Exception:
                         pass
                     st.blocked = False
-                    st.unblock_at_mono = 0.0
+                    st.unblock_at_epoch = 0.0
                     st.last_fork_mono = now_m
                     self.store.upsert_block(src_ip, False, 0.0)
             time.sleep(0.5)

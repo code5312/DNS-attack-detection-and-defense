@@ -33,7 +33,8 @@ def main() -> None:
     p_cmp.add_argument("pcap", nargs=2)
 
     p_plot = sub.add_parser("plot", help="결과 그래프 생성")
-    p_plot.add_argument("pcap", nargs="+")
+    p_plot.add_argument("pcap", nargs="*")
+    p_plot.add_argument("--csv", help="detection_result.csv 기반 risk score 그래프 생성")
 
     sub.add_parser("sample", help="테스트용 샘플 pcap 생성")
     sub.add_parser("live", help="실시간 SOAR 엔진 실행")
@@ -56,7 +57,10 @@ def main() -> None:
         raise SystemExit(run_script(SCRIPTS / "dns_analyzer.py", list(args.pcap) + ["--compare"]))
 
     if args.cmd == "plot":
-        raise SystemExit(run_script(SCRIPTS / "plot_results.py", list(args.pcap)))
+        extra = list(args.pcap)
+        if args.csv:
+            extra += ["--csv", args.csv]
+        raise SystemExit(run_script(SCRIPTS / "plot_results.py", extra))
 
     if args.cmd == "sample":
         raise SystemExit(run_script(SCRIPTS / "generate_sample_pcap.py", []))

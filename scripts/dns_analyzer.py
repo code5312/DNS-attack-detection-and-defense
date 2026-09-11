@@ -388,40 +388,45 @@ def compare_pcaps(paths: list[Path], out_dir: Path) -> None:
 def main():
     parser = argparse.ArgumentParser(description="Scapy DNS 패킷 분석기")
     parser.add_argument("pcap", nargs="+", help="pcap file(s)")
-    parser.add_argument("-o", "--output", help="per-packet CSV output path")
-    parser.add_argument("--host-csv", default=None, help="per-host stats CSV")
+    parser.add_argument("-o", "--output", help="per-packet CSV output path (단일 pcap일 때만 사용)")
+    parser.add_argument("--host-csv", default=None, help="per-host stats CSV (단일 pcap일 때만 사용)")
     parser.add_argument("--compare", action="store_true", help="compare multiple pcaps")
-    parser.add_argument("--json", dest="json_out", help="JSON summary output")
+    parser.add_argument("--json", dest="json_out", help="JSON summary output (단일 pcap일 때만 사용)")
     args = parser.parse_args()
 
     paths = [Path(p) if Path(p).exists() else ROOT / p for p in args.pcap]
 
-    if args.compare and len(paths) > 1:
+    if args.compare:
+        if len(paths) < 2:
+            parser.error("--compare requires at least two pcap files")
         compare_pcaps(paths, ROOT / "results")
         return
 
-    pcap = paths[0]
-    analyzer = DNSAnalyzer()
-    analyzer.analyze_pcap(pcap)
-    stats = analyzer.compute_all_host_stats()
-    analyzer.print_summary(pcap.name, stats)
+    if len(paths) > 1 and (args.output or args.host_csv or args.json_out):
+        parser.error("-o/--host-csv/--json can only be used with a single pcap (use --compare for multiple)")
 
-    stem = pcap.stem
-    results_dir = ROOT / "results"
-    pkt_csv = Path(args.output) if args.output else results_dir / f"{stem}_packets.csv"
-    host_csv = Path(args.host_csv) if args.host_csv else results_dir / f"{stem}_host_stats.csv"
+    for pcap in paths:
+        analyzer = DNSAnalyzer()
+        analyzer.analyze_pcap(pcap)
+        stats = analyzer.compute_all_host_stats()
+        analyzer.print_summary(pcap.name, stats)
 
-    analyzer.save_packets_csv(pkt_csv)
-    analyzer.save_host_stats_csv(host_csv, stats)
-    print(f"\n[+] Packets CSV : {pkt_csv}")
-    print(f"[+] Host stats  : {host_csv}")
+        stem = pcap.stem
+        results_dir = ROOT / "results"
+        pkt_csv = Path(args.output) if args.output else results_dir / f"{stem}_packets.csv"
+        host_csv = Path(args.host_csv) if args.host_csv else results_dir / f"{stem}_host_stats.csv"
 
-    if args.json_out:
-        out = Path(args.json_out)
-        out.parent.mkdir(parents=True, exist_ok=True)
-        with open(out, "w", encoding="utf-8") as f:
-            json.dump({ip: asdict(s) for ip, s in stats.items()}, f, indent=2, ensure_ascii=False)
-        print(f"[+] JSON        : {out}")
+        analyzer.save_packets_csv(pkt_csv)
+        analyzer.save_host_stats_csv(host_csv, stats)
+        print(f"\n[+] Packets CSV : {pkt_csv}")
+        print(f"[+] Host stats  : {host_csv}")
+
+        if args.json_out:
+            out = Path(args.json_out)
+            out.parent.mkdir(parents=True, exist_ok=True)
+            with open(out, "w", encoding="utf-8") as f:
+                json.dump({ip: asdict(s) for ip, s in stats.items()}, f, indent=2, ensure_ascii=False)
+            print(f"[+] JSON        : {out}")
 
 
 if __name__ == "__main__":

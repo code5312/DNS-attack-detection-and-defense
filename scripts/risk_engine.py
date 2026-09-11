@@ -52,6 +52,7 @@ class RiskAssessment:
     hex_like_count: int
     snort_alerts: int
     blacklist_hit: int
+    ip_blacklist_hit: bool
     recommended_action: str
 
 
@@ -137,10 +138,18 @@ class RiskEngine:
         self.blacklist = {d for d in merged if d}
         whitelist_file = ROOT / (bl.get("whitelist_file", "rules/domain_whitelist.txt") if isinstance(bl, dict) else "rules/domain_whitelist.txt")
         self.whitelist = {d for d in load_line_list(whitelist_file) if d}
+        ip_file = ROOT / (bl.get("ip_file", "rules/ip_blacklist.txt") if isinstance(bl, dict) else "rules/ip_blacklist.txt")
+        self.ip_blacklist = {ip for ip in load_line_list(ip_file) if ip}
         self.snort_sid_allow = {"1000001", "1000005", "1000006", "1000007", "1000008", "1000012"}
 
 
-    def score_host(self, stats: HostStats, snort_count: int = 0, blacklist_hit: int = 0) -> RiskAssessment:
+    def score_host(
+        self,
+        stats: HostStats,
+        snort_count: int = 0,
+        blacklist_hit: int = 0,
+        ip_blacklist_hit: bool = False,
+    ) -> RiskAssessment:
         t, s = self.thresholds, self.scores
         breakdown: dict[str, int] = {}
 
@@ -175,6 +184,8 @@ class RiskEngine:
             breakdown["attacker_domain"] = s.get("attacker_domain", 2)
         if blacklist_hit > 0:
             breakdown["blacklist_hit"] = max(s.get("blacklist_hit", 7), 7)
+        if ip_blacklist_hit:
+            breakdown["ip_blacklist_hit"] = max(s.get("ip_blacklist_hit", 7), 7)
 
         total = sum(breakdown.values())
         verdict = self._verdict(total)
@@ -203,6 +214,7 @@ class RiskEngine:
             hex_like_count=stats.hex_like_count,
             snort_alerts=snort_count,
             blacklist_hit=blacklist_hit,
+            ip_blacklist_hit=ip_blacklist_hit,
             recommended_action=action,
         )
 
@@ -233,7 +245,12 @@ class RiskEngine:
         snort_counts = parse_snort_alerts(self.snort_log, sid_allow=self.snort_sid_allow)
         blacklist_hits = self._blacklist_hits_by_src(analyzer)
         return [
-            self.score_host(s, snort_counts.get(ip, 0), blacklist_hits.get(ip, 0))
+            self.score_host(
+                s,
+                snort_counts.get(ip, 0),
+                blacklist_hits.get(ip, 0),
+                ip in self.ip_blacklist,
+            )
             for ip, s in host_stats.items()
         ]
 
@@ -250,7 +267,7 @@ class RiskEngine:
             "avg_qname_len", "max_qname_len", "avg_entropy", "max_entropy",
             "queries_per_minute", "query_count", "query_count_10s", "txt_cname_ratio",
             "nxdomain_ratio", "base32_like_count", "hex_like_count", "snort_alerts",
-            "blacklist_hit", "breakdown",
+            "blacklist_hit", "ip_blacklist_hit", "breakdown",
         ]
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         rows = []
@@ -276,6 +293,7 @@ class RiskEngine:
                 "hex_like_count": a.hex_like_count,
                 "snort_alerts": a.snort_alerts,
                 "blacklist_hit": a.blacklist_hit,
+                "ip_blacklist_hit": a.ip_blacklist_hit,
                 "breakdown": json.dumps(a.breakdown, ensure_ascii=False),
             })
 
@@ -313,6 +331,7 @@ class RiskEngine:
             print(f"  nxdomain_ratio  : {a.nxdomain_ratio}")
             print(f"  snort_alerts    : {a.snort_alerts}")
             print(f"  blacklist_hit   : {a.blacklist_hit}")
+            print(f"  ip_blacklist_hit: {a.ip_blacklist_hit}")
             print(f"  risk_score      : {a.risk_score}")
             print(f"  breakdown       : {a.breakdown}")
             print(f"  [{a.verdict.level}] {a.verdict.message}")

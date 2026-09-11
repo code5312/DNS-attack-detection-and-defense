@@ -1,8 +1,13 @@
+.venv/
 venv/
 __pycache__/
 *.pyc
 results/*.csv
 results/*.json
 results/*.log
+results/*.db
+results/*.db-wal
+results/*.db-shm
+results/graphs/*.png
 results/snort_alerts.log
 pcaps/*.pcap
