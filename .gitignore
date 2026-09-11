@@ -1,7 +1,23 @@
+# ===== Python =====
 .venv/
 venv/
+env/
 __pycache__/
 *.pyc
+*.pyo
+*.egg-info/
+
+# ===== OS / Editor =====
+.DS_Store
+.vscode/
+.idea/
+
+# ===== 환경변수 =====
+.env
+
+# ===== 실험 산출물 (README에 명시된 정책) =====
+pcaps/*.pcap
+!pcaps/.gitkeep
 results/*.csv
 results/*.json
 results/*.log
@@ -10,4 +26,5 @@ results/*.db-wal
 results/*.db-shm
 results/graphs/*.png
 results/snort_alerts.log
-pcaps/*.pcap
+!results/.gitkeep
+!results/graphs/.gitkeep
